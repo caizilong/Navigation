@@ -1,13 +1,14 @@
-project_name: vint-release
+project_name: vint
 run_name: vint-5c
 
 # training setup
-use_wandb: True # set to false if you don't want to log to wandb
+use_wandb: False  # 临时禁用，稳定后再配置
 train: True
-batch_size: 256
-epochs: 100
+batch_size: 128  # 与mamba保持一致以公平对比
+eval_batch_size: 64  # 评估时减小batch_size避免OOM
+epochs: 50
 gpu_ids: [0]
-num_workers: 12
+num_workers: 4  # 与mamba保持一致
 lr: 5e-4
 optimizer: adamw
 clipping: False
@@ -34,7 +35,7 @@ normalize: True
 
 # context
 context_type: temporal
-context_size: 5
+context_size: 5  # ViNT使用标准context_size
 # tradeoff between action and distance prediction loss
 alpha: 0.5
 
@@ -55,58 +56,15 @@ learn_angle: True
 image_size: [85, 64] # width, height
 goal_type: "image"
 
+# 使用与vint_mamba相同的数据集配置以确保公平对比
 datasets:
-  recon:
-    data_folder: /home/<username>/vint_dataset/recon
-    train: /home/<username>/data_splits/recon/train/ # path to train folder with traj_names.txt
-    test: /home/<username>/data_splits/recon/test/ # path to test folder with traj_names.txt
-    end_slack: 3 # because many trajectories end in collisions
-    goals_per_obs: 1 # how many goals are sampled per observation
-    negative_mining: True # negative mining from the ViNG paper (Shah et al.)
   go_stanford:
-    data_folder: /home/<username>/vint_dataset/go_stanford_cropped # datasets/stanford_go_new
-    train: /home/<username>/data_splits/go_stanford/train/
-    test: /home/<username>/data_splits/go_stanford/test/
+    data_folder: /home/czl/Navigation/datasets/go_stanford
+    train: vint_train/data/data_splits/go_stanford/train/
+    test: vint_train/data/data_splits/go_stanford/test/
     end_slack: 0
-    goals_per_obs: 2 # increase dataset size
+    goals_per_obs: 2
     negative_mining: True
-  cory_hall:
-    data_folder: /home/<username>/vint_dataset/cory_hall/
-    train: /home/<username>/data_splits/cory_hall/train/
-    test: /home/<username>/data_splits/cory_hall/test/
-    end_slack: 3 # because many trajectories end in collisions
-    goals_per_obs: 1
-    negative_mining: True
-  tartan_drive:
-    data_folder: /home/<username>/vint_dataset/tartan_drive/
-    train: /home/<username>/data_splits/tartan_drive/train/
-    test: /home/<username>/data_splits/tartan_drive/test/
-    end_slack: 3 # because many trajectories end in collisions
-    goals_per_obs: 1
-    negative_mining: True
-  sacson:
-    data_folder: /home/<username>/vint_dataset/sacson/
-    train: /home/<username>/data_splits/sacson/train/
-    test: /home/<username>/data_splits/sacson/test/
-    end_slack: 3 # because many trajectories end in collisions
-    goals_per_obs: 1
-    negative_mining: True
-
-  # private datasets (uncomment if you have access)
-  # seattle:
-  #   data_folder: /home/<username>/vint_dataset/seattle/
-  #   train: /home/<username>/data_splits/seattle/train/
-  #   test: /home/<username>/data_splits/seattle/test/
-  #   end_slack: 0
-  #   goals_per_obs: 1
-  #   negative_mining: True
-  # scand:
-  #   data_folder: /home/<username>/vint_dataset/scand/
-  #   train: /home/<username>/data_splits/scand/train/
-  #   test: /home/<username>/data_splits/scand/test/
-  #   end_slack: 0
-  #   goals_per_obs: 1
-  #   negative_mining: True
 
 # logging stuff
 ## =0 turns off

@@ -26,6 +26,8 @@ from vint_train.models.vint.vit import ViT
 from vint_train.models.nomad.nomad import NoMaD, DenseNetwork
 from vint_train.models.nomad.nomad_vint import NoMaD_ViNT, replace_bn_with_gn
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
+# Import MambaViNT (新增)
+from vint_train.models.mamba.mamba_vint import MambaViNT
 
 
 from vint_train.data.vint_dataset import ViNT_Dataset
@@ -165,6 +167,23 @@ def main(config):
             mha_num_attention_layers=config["mha_num_attention_layers"],
             mha_ff_dim_factor=config["mha_ff_dim_factor"],
         )
+    elif config["model_type"] == "mamba_vint":
+        # MambaViNT模型初始化
+        model = MambaViNT(
+            context_size=config["context_size"],
+            len_traj_pred=config["len_traj_pred"],
+            learn_angle=config["learn_angle"],
+            obs_encoder=config["obs_encoder"],
+            obs_encoding_size=config["obs_encoding_size"],
+            late_fusion=config.get("late_fusion", False),
+            mamba_d_state=config.get("mamba_d_state", 64),
+            mamba_d_conv=config.get("mamba_d_conv", 4),
+            mamba_expand=config.get("mamba_expand", 2),
+            mamba_headdim=config.get("mamba_headdim", 64),
+            mamba_num_blocks=config.get("mamba_num_blocks", 4),
+            mamba_chunk_size=config.get("mamba_chunk_size", 256),
+            mamba_use_mem_eff=config.get("mamba_use_mem_eff", True),
+        )
     elif config["model_type"] == "nomad":
         if config["vision_encoder"] == "nomad_vint":
             vision_encoder = NoMaD_ViNT(
@@ -300,7 +319,7 @@ def main(config):
         if scheduler is not None and "scheduler" in latest_checkpoint:
             scheduler.load_state_dict(latest_checkpoint["scheduler"].state_dict())
 
-    if config["model_type"] == "vint" or config["model_type"] == "gnm": 
+    if config["model_type"] == "vint" or config["model_type"] == "gnm" or config["model_type"] == "mamba_vint": 
         train_eval_loop(
             train_model=config["train"],
             model=model,
@@ -390,10 +409,10 @@ if __name__ == "__main__":
         wandb.init(
             project=config["project_name"],
             settings=wandb.Settings(start_method="fork"),
-            entity="gnmv2", # TODO: change this to your wandb entity
+            entity="coisinic243",  # 使用你的wandb账户
         )
         wandb.save(args.config, policy="now")  # save the config file
-        wandb.run.name = config["run_name"]
+        wandb.run.name = config["vint-mamba"]
         # update the wandb args with the training configurations
         if wandb.run:
             wandb.config.update(config)

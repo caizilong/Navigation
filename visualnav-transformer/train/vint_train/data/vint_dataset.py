@@ -279,6 +279,11 @@ class ViNT_Dataset(Dataset):
         else:
             with open(os.path.join(self.data_folder, trajectory_name, "traj_data.pkl"), "rb") as f:
                 traj_data = pickle.load(f)
+            # 修复嵌套数组问题: 将object类型数组转为float数组
+            if traj_data["position"].dtype == object:
+                traj_data["position"] = np.array([np.array(p).flatten() for p in traj_data["position"]], dtype=np.float32)
+            if traj_data["yaw"].dtype == object:
+                traj_data["yaw"] = np.array([float(y.item() if hasattr(y, 'item') else y[0] if isinstance(y, np.ndarray) else y) for y in traj_data["yaw"]], dtype=np.float32)
             self.trajectory_cache[trajectory_name] = traj_data
             return traj_data
 

@@ -147,3 +147,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+echo "visualnav-transformer/diffusion_policy/" >> .gitignore

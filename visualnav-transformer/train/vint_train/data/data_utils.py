@@ -26,6 +26,9 @@ def get_data_path(data_folder: str, f: str, time: int, data_type: str = "image")
 
 
 def yaw_rotmat(yaw: float) -> np.ndarray:
+    # 处理yaw可能是数组的情况
+    if isinstance(yaw, np.ndarray):
+        yaw = float(yaw.item()) if yaw.size == 1 else float(yaw[0])
     return np.array(
         [
             [np.cos(yaw), -np.sin(yaw), 0.0],
