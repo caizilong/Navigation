@@ -7,7 +7,7 @@ run_name: vint-mamba
 # training setup
 use_wandb: False  # 启用wandb监控训练
 train: True
-batch_size: 256  # 降低以支持更大context_size
+batch_size: 64  # 降低以支持更大context_size
 eval_batch_size: 16   # 评估时减小batch_size避免OOM
 epochs: 100
 gpu_ids: [0]
