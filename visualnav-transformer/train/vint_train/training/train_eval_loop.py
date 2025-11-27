@@ -17,6 +17,7 @@ from torchvision import transforms
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
 
+
 def train_eval_loop(
     train_model: bool,
     model: nn.Module,
@@ -38,6 +39,7 @@ def train_eval_loop(
     learn_angle: bool = True,
     use_wandb: bool = True,
     eval_fraction: float = 0.25,
+    max_grad_norm: float = None,  # 添加梯度裁剪参数
 ):
     """
     Train and evaluate the model for several epochs (vint or gnm models)
@@ -70,7 +72,7 @@ def train_eval_loop(
     for epoch in range(current_epoch, current_epoch + epochs):
         if train_model:
             print(
-            f"Start ViNT Training Epoch {epoch}/{current_epoch + epochs - 1}"
+                f"Start ViNT Training Epoch {epoch}/{current_epoch + epochs - 1}"
             )
             train(
                 model=model,
@@ -88,6 +90,7 @@ def train_eval_loop(
                 image_log_freq=image_log_freq,
                 num_images_log=num_images_log,
                 use_wandb=use_wandb,
+                max_grad_norm=max_grad_norm,  # 传递梯度裁剪参数
             )
 
         avg_total_test_loss = []
@@ -147,6 +150,7 @@ def train_eval_loop(
         wandb.log({})
     print()
 
+
 def train_eval_loop_nomad(
     train_model: bool,
     model: nn.Module,
@@ -196,13 +200,11 @@ def train_eval_loop_nomad(
         eval_freq: frequency of evaluation
     """
     latest_path = os.path.join(project_folder, f"latest.pth")
-    ema_model = EMAModel(model=model,power=0.75)
-    
+    ema_model = EMAModel(model=model, power=0.75)
+
     for epoch in range(current_epoch, current_epoch + epochs):
         if train_model:
-            print(
-            f"Start ViNT DP Training Epoch {epoch}/{current_epoch + epochs - 1}"
-            )
+            print(f"Start ViNT DP Training Epoch {epoch}/{current_epoch + epochs - 1}")
             train_nomad(
                 model=model,
                 ema_model=ema_model,
@@ -243,8 +245,7 @@ def train_eval_loop_nomad(
         latest_scheduler_path = os.path.join(project_folder, f"scheduler_latest.pth")
         torch.save(lr_scheduler.state_dict(), latest_scheduler_path)
 
-
-        if (epoch + 1) % eval_freq == 0: 
+        if (epoch + 1) % eval_freq == 0:
             for dataset_type in test_dataloaders:
                 print(
                     f"Start {dataset_type} ViNT DP Testing Epoch {epoch}/{current_epoch + epochs - 1}"
@@ -280,10 +281,10 @@ def train_eval_loop_nomad(
             "lr": optimizer.param_groups[0]["lr"],
         }, commit=False)
 
-        
     # Flush the last set of eval logs
     wandb.log({})
     print()
+
 
 def load_model(model, model_type, checkpoint: dict) -> None:
     """Load model from checkpoint."""
@@ -312,7 +313,7 @@ def count_parameters(model):
         if not parameter.requires_grad: continue
         params = parameter.numel()
         table.add_row([name, params])
-        total_params+=params
+        total_params += params
     # print(table)
     print(f"Total Trainable Params: {total_params/1e6:.2f}M")
     return total_params

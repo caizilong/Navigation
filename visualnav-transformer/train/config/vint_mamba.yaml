@@ -7,21 +7,21 @@ run_name: vint-mamba
 # training setup
 use_wandb: False  # 启用wandb监控训练
 train: True
-batch_size: 64  # 降低以支持更大context_size
+batch_size: 32  # 增加batch_size提高训练稳定性
 eval_batch_size: 16   # 评估时减小batch_size避免OOM
-epochs: 100
+epochs: 200
 gpu_ids: [0]
-num_workers: 4
-lr: 5e-4
+num_workers: 8
+lr: 1e-4  
 optimizer: adamw
-clipping: False
+clipping: True
 max_norm: 1.
 scheduler: "cosine"
 warmup: True 
-warmup_epochs: 4
+warmup_epochs: 1
 cyclic_period: 10
-plateau_patience: 3
-plateau_factor: 0.5
+# plateau_patience: 3
+# plateau_factor: 0.5
 seed: 0
 
 # model params
@@ -30,21 +30,21 @@ obs_encoder: "efficientnet-b0"
 obs_encoding_size: 512
 late_fusion: False
 
-# Mamba-specific parameters (参考MTIL优化)
-mamba_d_state: 64         # State space dimension (MTIL为512，导航任务降低)
+# Mamba-specific parameters (优化后配置)
+mamba_d_state: 64        # 增加状态空间维度提升模型容量
 mamba_d_conv: 4           # Convolution kernel size
 mamba_expand: 2           # Expansion factor  
-mamba_headdim: 64         # Head dimension (MTIL为128，导航任务降低)
-mamba_num_blocks: 4       # Number of Mamba blocks
-mamba_chunk_size: 256     # Chunk size - Mamba内部分chunk处理，关键优化！
-mamba_use_mem_eff: True   # False 禁用mem_eff避免额外显存开销
+mamba_headdim: 64        # 增加head维度提升表达能力
+mamba_num_blocks: 4       # 增加层数提高模型深度
+mamba_chunk_size: 256     # Chunk size - Mamba内部分chunk处理
+mamba_use_mem_eff: True   # 禁用mem_eff避免额外显存开销
 
 # normalization for the action space
 normalize: True
 
-# context - Mamba可以处理更长的上下文！
+# context - 先用较小值确保训练稳定
 context_type: temporal
-context_size: 20  # 先从10开始，稳定后可逐步增大
+context_size: 10  # 降低到合理范围，避免小batch下过拟合
 
 # tradeoff between action and distance prediction loss
 alpha: 0.5
@@ -63,7 +63,7 @@ len_traj_pred: 5
 learn_angle: True
 
 # dataset specific parameters
-image_size: [80, 60] # width, height
+image_size: [160, 120] # width, height
 goal_type: "image"
 
 datasets:

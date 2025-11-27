@@ -33,6 +33,8 @@ for key in data_config['action_stats']:
     ACTION_STATS[key] = np.array(data_config['action_stats'][key])
 
 # Train utils for ViNT and GNM
+
+
 def _compute_losses(
     dist_label: torch.Tensor,
     action_label: torch.Tensor,
@@ -180,6 +182,7 @@ def train(
     num_images_log: int = 8,
     use_wandb: bool = True,
     use_tqdm: bool = True,
+    max_grad_norm: float = None,  # 添加梯度裁剪参数
 ):
     """
     Train the model for one epoch.
@@ -252,7 +255,7 @@ def train(
         obs_image = torch.cat(obs_images, dim=1)
 
         viz_goal_image = TF.resize(goal_image, VISUALIZATION_IMAGE_SIZE)
-        
+
         goal_image = transform(goal_image).to(device)
         model_outputs = model(obs_image, goal_image)
 
@@ -261,7 +264,7 @@ def train(
         action_mask = action_mask.to(device)
 
         optimizer.zero_grad()
-      
+
         dist_pred, action_pred = model_outputs
 
         losses = _compute_losses(
@@ -275,6 +278,11 @@ def train(
         )
 
         losses["total_loss"].backward()
+
+        # 梯度裁剪防止爆炸（特别是Mamba中的cumsum操作）
+        if max_grad_norm is not None and max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
         optimizer.step()
 
         for key, value in losses.items():
@@ -612,7 +620,7 @@ def train_nomad(
             # Generate random goal mask
             goal_mask = (torch.rand((B,)) < goal_mask_prob).long().to(device)
             obsgoal_cond = model("vision_encoder", obs_img=batch_obs_images, goal_img=batch_goal_images, input_goal_mask=goal_mask)
-            
+
             # Get distance label
             distance = distance.float().to(device)
 
@@ -624,7 +632,7 @@ def train_nomad(
             # Predict distance
             dist_pred = model("dist_pred_net", obsgoal_cond=obsgoal_cond)
             dist_loss = nn.functional.mse_loss(dist_pred.squeeze(-1), distance)
-            dist_loss = (dist_loss * (1 - goal_mask.float())).mean() / (1e-2 +(1 - goal_mask.float()).mean())
+            dist_loss = (dist_loss * (1 - goal_mask.float())).mean() / (1e-2 + (1 - goal_mask.float()).mean())
 
             # Sample noise to add to actions
             noise = torch.randn(naction.shape, device=device)
@@ -638,7 +646,7 @@ def train_nomad(
             # Add noise to the clean images according to the noise magnitude at each diffusion iteration
             noisy_action = noise_scheduler.add_noise(
                 naction, noise, timesteps)
-            
+
             # Predict the noise residual
             noise_pred = model("noise_pred_net", sample=noisy_action, timestep=timesteps, global_cond=obsgoal_cond)
 
@@ -651,7 +659,7 @@ def train_nomad(
 
             # L2 loss
             diffusion_loss = action_reduce(F.mse_loss(noise_pred, noise, reduction="none"))
-            
+
             # Total loss
             loss = alpha * dist_loss + (1-alpha) * diffusion_loss
 
@@ -670,24 +678,23 @@ def train_nomad(
             wandb.log({"dist_loss": dist_loss.item()})
             wandb.log({"diffusion_loss": diffusion_loss.item()})
 
-
             if i % print_log_freq == 0:
                 losses = _compute_losses_nomad(
-                            ema_model.averaged_model,
-                            noise_scheduler,
-                            batch_obs_images,
-                            batch_goal_images,
-                            distance.to(device),
-                            actions.to(device),
-                            device,
-                            action_mask.to(device),
-                        )
-                
+                    ema_model.averaged_model,
+                    noise_scheduler,
+                    batch_obs_images,
+                    batch_goal_images,
+                    distance.to(device),
+                    actions.to(device),
+                    device,
+                    action_mask.to(device),
+                )
+
                 for key, value in losses.items():
                     if key in loggers:
                         logger = loggers[key]
                         logger.log_data(value.item())
-            
+
                 data_log = {}
                 for key, logger in loggers.items():
                     data_log[logger.full_name()] = logger.latest()
@@ -758,10 +765,11 @@ def evaluate_nomad(
     goal_mask_prob = torch.clip(torch.tensor(goal_mask_prob), 0, 1)
     ema_model = ema_model.averaged_model
     ema_model.eval()
-    
+
     num_batches = len(dataloader)
 
-    uc_action_loss_logger = Logger("uc_action_loss", eval_type, window_size=print_log_freq)
+    uc_action_loss_logger = Logger(
+        "uc_action_loss", eval_type, window_size=print_log_freq)
     uc_action_waypts_cos_sim_logger = Logger(
         "uc_action_waypts_cos_sim", eval_type, window_size=print_log_freq
     )
@@ -788,14 +796,14 @@ def evaluate_nomad(
     num_batches = max(int(num_batches * eval_fraction), 1)
 
     with tqdm.tqdm(
-        itertools.islice(dataloader, num_batches), 
-        total=num_batches, 
-        dynamic_ncols=True, 
-        desc=f"Evaluating {eval_type} for epoch {epoch}", 
-        leave=False) as tepoch:
+            itertools.islice(dataloader, num_batches),
+            total=num_batches,
+            dynamic_ncols=True,
+            desc=f"Evaluating {eval_type} for epoch {epoch}",
+            leave=False) as tepoch:
         for i, data in enumerate(tepoch):
             (
-                obs_image, 
+                obs_image,
                 goal_image,
                 actions,
                 distance,
@@ -803,7 +811,7 @@ def evaluate_nomad(
                 dataset_idx,
                 action_mask,
             ) = data
-            
+
             obs_images = torch.split(obs_image, 3, dim=1)
             batch_viz_obs_images = TF.resize(obs_images[-1], VISUALIZATION_IMAGE_SIZE[::-1])
             batch_viz_goal_images = TF.resize(goal_image, VISUALIZATION_IMAGE_SIZE[::-1])
@@ -848,24 +856,24 @@ def evaluate_nomad(
             ### RANDOM MASK ERROR ###
             # Predict the noise residual
             rand_mask_noise_pred = ema_model("noise_pred_net", sample=noisy_actions, timestep=timesteps, global_cond=rand_mask_cond)
-            
+
             # L2 loss
             rand_mask_loss = nn.functional.mse_loss(rand_mask_noise_pred, noise)
-            
+
             ### NO MASK ERROR ###
             # Predict the noise residual
             no_mask_noise_pred = ema_model("noise_pred_net", sample=noisy_actions, timestep=timesteps, global_cond=obsgoal_cond)
-            
+
             # L2 loss
             no_mask_loss = nn.functional.mse_loss(no_mask_noise_pred, noise)
 
             ### GOAL MASK ERROR ###
             # predict the noise residual
             goal_mask_noise_pred = ema_model("noise_pred_net", sample=noisy_actions, timestep=timesteps, global_cond=goal_mask_cond)
-            
+
             # L2 loss
             goal_mask_loss = nn.functional.mse_loss(goal_mask_noise_pred, noise)
-            
+
             # Logging
             loss_cpu = rand_mask_loss.item()
             tepoch.set_postfix(loss=loss_cpu)
@@ -876,21 +884,21 @@ def evaluate_nomad(
 
             if i % print_log_freq == 0 and print_log_freq != 0:
                 losses = _compute_losses_nomad(
-                            ema_model,
-                            noise_scheduler,
-                            batch_obs_images,
-                            batch_goal_images,
-                            distance.to(device),
-                            actions.to(device),
-                            device,
-                            action_mask.to(device),
-                        )
-                
+                    ema_model,
+                    noise_scheduler,
+                    batch_obs_images,
+                    batch_goal_images,
+                    distance.to(device),
+                    actions.to(device),
+                    device,
+                    action_mask.to(device),
+                )
+
                 for key, value in losses.items():
                     if key in loggers:
                         logger = loggers[key]
                         logger.log_data(value.item())
-            
+
                 data_log = {}
                 for key, logger in loggers.items():
                     data_log[logger.full_name()] = logger.latest()
@@ -923,12 +931,13 @@ def evaluate_nomad(
 
 # normalize data
 def get_data_stats(data):
-    data = data.reshape(-1,data.shape[-1])
+    data = data.reshape(-1, data.shape[-1])
     stats = {
         'min': np.min(data, axis=0),
         'max': np.max(data, axis=0)
     }
     return stats
+
 
 def normalize_data(data, stats):
     # nomalize to [0,1]
@@ -937,16 +946,19 @@ def normalize_data(data, stats):
     ndata = ndata * 2 - 1
     return ndata
 
+
 def unnormalize_data(ndata, stats):
     ndata = (ndata + 1) / 2
     data = ndata * (stats['max'] - stats['min']) + stats['min']
     return data
 
+
 def get_delta(actions):
     # append zeros to first action
-    ex_actions = np.concatenate([np.zeros((actions.shape[0],1,actions.shape[-1])), actions], axis=1)
-    delta = ex_actions[:,1:] - ex_actions[:,:-1]
+    ex_actions = np.concatenate([np.zeros((actions.shape[0], 1, actions.shape[-1])), actions], axis=1)
+    delta = ex_actions[:, 1:] - ex_actions[:, :-1]
     return delta
+
 
 def get_action(diffusion_output, action_stats=ACTION_STATS):
     # diffusion_output: (B, 2*T+1, 1)
@@ -977,14 +989,13 @@ def model_output(
 
     no_mask = torch.zeros((batch_goal_images.shape[0],)).long().to(device)
     obsgoal_cond = model("vision_encoder", obs_img=batch_obs_images, goal_img=batch_goal_images, input_goal_mask=no_mask)
-    # obsgoal_cond = obsgoal_cond.flatten(start_dim=1)  
+    # obsgoal_cond = obsgoal_cond.flatten(start_dim=1)
     obsgoal_cond = obsgoal_cond.repeat_interleave(num_samples, dim=0)
 
     # initialize action from Gaussian noise
     noisy_diffusion_output = torch.randn(
         (len(obs_cond), pred_horizon, action_dim), device=device)
     diffusion_output = noisy_diffusion_output
-
 
     for k in noise_scheduler.timesteps[:]:
         # predict noise
@@ -1072,7 +1083,7 @@ def visualize_diffusion_action_distribution(
     batch_goal_images = batch_goal_images[:num_images_log]
     batch_action_label = batch_action_label[:num_images_log]
     batch_goal_pos = batch_goal_pos[:num_images_log]
-    
+
     wandb_list = []
 
     pred_horizon = batch_action_label.shape[1]
@@ -1148,9 +1159,9 @@ def visualize_diffusion_action_distribution(
             point_labels=None,
             quiver_freq=0,
             traj_alphas=traj_alphas,
-            point_alphas=point_alphas, 
+            point_alphas=point_alphas,
         )
-        
+
         obs_image = to_numpy(batch_viz_obs_images[i])
         goal_image = to_numpy(batch_viz_goal_images[i])
         # move channel to last dimension
@@ -1163,7 +1174,7 @@ def visualize_diffusion_action_distribution(
         ax[0].set_title(f"diffusion action predictions")
         ax[1].set_title(f"observation")
         ax[2].set_title(f"goal: label={np_distance_labels[i]} gc_dist={gc_distances_avg[i]:.2f}±{gc_distances_std[i]:.2f}")
-        
+
         # make the plot large
         fig.set_size_inches(18.5, 10.5)
 
@@ -1173,5 +1184,3 @@ def visualize_diffusion_action_distribution(
         plt.close(fig)
     if len(wandb_list) > 0 and use_wandb:
         wandb.log({f"{eval_type}_action_samples": wandb_list}, commit=False)
-
-
