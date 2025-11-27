@@ -25,6 +25,7 @@ from vint_train.models.vint.vint import ViNT
 from vint_train.models.vint.vit import ViT
 from vint_train.models.nomad.nomad import NoMaD, DenseNetwork
 from vint_train.models.nomad.nomad_vint import NoMaD_ViNT, replace_bn_with_gn
+from vint_train.models.nomad.nomad_mamba import NoMaD_Mamba
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 # Import MambaViNT (新增)
 from vint_train.models.mamba.mamba_vint import MambaViNT
@@ -194,6 +195,19 @@ def main(config):
                 mha_ff_dim_factor=config["mha_ff_dim_factor"],
             )
             vision_encoder = replace_bn_with_gn(vision_encoder)
+        elif config["vision_encoder"] == "nomad_mamba":
+            # 新增：NoMaD-Mamba vision encoder
+            vision_encoder = NoMaD_Mamba(
+                obs_encoding_size=config["encoding_size"],
+                context_size=config["context_size"],
+                mamba_d_state=config.get("mamba_d_state", 64),
+                mamba_d_conv=config.get("mamba_d_conv", 4),
+                mamba_expand=config.get("mamba_expand", 2),
+                mamba_headdim=config.get("mamba_headdim", 64),
+                mamba_num_blocks=config.get("mamba_num_blocks", 2),
+                mamba_chunk_size=config.get("mamba_chunk_size", 256),
+                mamba_use_mem_eff=config.get("mamba_use_mem_eff", True),
+            )
         elif config["vision_encoder"] == "vib":
             vision_encoder = ViB(
                 obs_encoding_size=config["encoding_size"],
