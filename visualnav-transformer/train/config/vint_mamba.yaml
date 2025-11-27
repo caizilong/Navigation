@@ -5,10 +5,10 @@ project_name: vint-mamba
 run_name: vint-mamba
 
 # training setup
-use_wandb: False  # 启用wandb监控训练
+use_wandb: True  
 train: True
-batch_size: 32  # 增加batch_size提高训练稳定性
-eval_batch_size: 16   # 评估时减小batch_size避免OOM
+batch_size: 32  
+eval_batch_size: 16   
 epochs: 200
 gpu_ids: [0]
 num_workers: 8
@@ -18,10 +18,10 @@ clipping: True
 max_norm: 1.
 scheduler: "cosine"
 warmup: True 
-warmup_epochs: 1
+warmup_epochs: 4
 cyclic_period: 10
-# plateau_patience: 3
-# plateau_factor: 0.5
+plateau_patience: 3
+plateau_factor: 0.5
 seed: 0
 
 # model params
@@ -63,7 +63,7 @@ len_traj_pred: 5
 learn_angle: True
 
 # dataset specific parameters
-image_size: [160, 120] # width, height
+image_size: [80, 60] # width, height
 goal_type: "image"
 
 datasets:
