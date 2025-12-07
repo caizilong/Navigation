@@ -114,18 +114,38 @@ class NoMaD_Mamba(nn.Module):
             for _ in range(mamba_num_blocks)
         ])
 
+        # # 3. Goal Mask定义（保留NoMaD的mask机制）
+        # self.goal_mask = torch.zeros(
+        #     (1, self.context_size + 2), dtype=torch.bool)
+        # self.goal_mask[:, -1] = True  # Mask out the goal
+        # self.no_mask = torch.zeros(
+        #     (1, self.context_size + 2), dtype=torch.bool)
+        # self.all_masks = torch.cat([self.no_mask, self.goal_mask], dim=0)
+        # self.avg_pool_mask = torch.cat([
+        #     1 - self.no_mask.float(),
+        #     (1 - self.goal_mask.float()) *
+        #     ((self.context_size + 2) / (self.context_size + 1))
+        # ], dim=0)
+
         # 3. Goal Mask定义（保留NoMaD的mask机制）
-        self.goal_mask = torch.zeros(
-            (1, self.context_size + 2), dtype=torch.bool)
-        self.goal_mask[:, -1] = True  # Mask out the goal
-        self.no_mask = torch.zeros(
-            (1, self.context_size + 2), dtype=torch.bool)
-        self.all_masks = torch.cat([self.no_mask, self.goal_mask], dim=0)
-        self.avg_pool_mask = torch.cat([
-            1 - self.no_mask.float(),
-            (1 - self.goal_mask.float()) *
-            ((self.context_size + 2) / (self.context_size + 1))
+        goal_mask = torch.zeros((1, self.context_size + 2), dtype=torch.bool)
+        goal_mask[:, -1] = True  # Mask out the goal
+        no_mask = torch.zeros((1, self.context_size + 2), dtype=torch.bool)
+
+        # 注册为 buffer，这样 model.to(device) 时会自动移动
+        self.register_buffer("goal_mask", goal_mask, persistent=True)
+        self.register_buffer("no_mask", no_mask, persistent=True)
+
+        # all_masks 与 avg_pool_mask 也注册为 buffer
+        all_masks = torch.cat([no_mask, goal_mask], dim=0)
+        self.register_buffer("all_masks", all_masks, persistent=True)
+
+        avg_pool_mask = torch.cat([
+            1 - no_mask.float(),
+            (1 - goal_mask.float()) * ((self.context_size + 2) / (self.context_size + 1))
         ], dim=0)
+        self.register_buffer("avg_pool_mask", avg_pool_mask, persistent=True)
+
 
     def forward(
         self,

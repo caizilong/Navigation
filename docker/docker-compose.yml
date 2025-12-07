@@ -1,11 +1,11 @@
 version: "3.9"
 
 services:
-  cz:
+  cai:
     build:
       context: .
-      dockerfile: ubuntu_cuda.dockerfile
-    container_name: cz
+      dockerfile: ubuntu22.04.dockerfile
+    container_name: cai
 
     deploy:
       resources:

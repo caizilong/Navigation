@@ -118,15 +118,23 @@ def train_eval_loop(
 
             avg_total_test_loss.append(total_eval_loss)
 
+        # checkpoint = {
+        #     "epoch": epoch,
+        #     "model": model,
+        #     "optimizer": optimizer,
+        #     "avg_total_test_loss": np.mean(avg_total_test_loss),
+        #     "scheduler": scheduler
+        # }
         checkpoint = {
             "epoch": epoch,
-            "model": model,
-            "optimizer": optimizer,
-            "avg_total_test_loss": np.mean(avg_total_test_loss),
-            "scheduler": scheduler
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": (scheduler.state_dict() if scheduler else None),
+            "avg_total_test_loss": float(np.mean(avg_total_test_loss)),
         }
         # log average eval loss
         if use_wandb:
+            # wandb.log({}, step=epoch, commit=False)
             wandb.log({}, commit=False)
 
         if scheduler is not None:
@@ -136,6 +144,10 @@ def train_eval_loop(
             else:
                 scheduler.step()
         if use_wandb:
+            # wandb.log({
+            #     "avg_total_test_loss": np.mean(avg_total_test_loss),
+            #     "lr": optimizer.param_groups[0]["lr"],
+            # }, step=epoch, commit=False)
             wandb.log({
                 "avg_total_test_loss": np.mean(avg_total_test_loss),
                 "lr": optimizer.param_groups[0]["lr"],
@@ -267,6 +279,9 @@ def train_eval_loop_nomad(
                     use_wandb=use_wandb,
                     eval_fraction=eval_fraction,
                 )
+        # wandb.log({
+        #     "lr": optimizer.param_groups[0]["lr"],
+        # }, step=epoch, commit=False)
         wandb.log({
             "lr": optimizer.param_groups[0]["lr"],
         }, commit=False)
@@ -275,8 +290,12 @@ def train_eval_loop_nomad(
             lr_scheduler.step()
 
         # log average eval loss
+        # wandb.log({}, step=epoch, commit=False)
         wandb.log({}, commit=False)
 
+        # wandb.log({
+        #     "lr": optimizer.param_groups[0]["lr"],
+        # }, step=epoch, commit=False)
         wandb.log({
             "lr": optimizer.param_groups[0]["lr"],
         }, commit=False)

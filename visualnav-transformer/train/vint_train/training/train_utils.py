@@ -135,6 +135,7 @@ def _log_data(
                 print(f"(epoch {epoch}) {logger.full_name()} {logger.average()}")
 
     if use_wandb and i % wandb_log_freq == 0 and wandb_log_freq != 0:
+        # wandb.log(data_log, step=epoch, commit=wandb_increment_step)
         wandb.log(data_log, commit=wandb_increment_step)
 
     if image_log_freq != 0 and i % image_log_freq == 0:
@@ -203,6 +204,18 @@ def train(
         use_wandb: whether to use wandb
         use_tqdm: whether to use tqdm
     """
+    # -------- Hook: 收集所有梯度用于 global norm --------
+    global_grad_list = []
+
+    def save_grad_hook(p):
+        def hook(grad):
+            global_grad_list.append(grad.view(-1))
+        return hook
+
+    for name, p in model.named_parameters():
+        if p.requires_grad:
+            p.register_hook(save_grad_hook(p))
+
     model.train()
     dist_loss_logger = Logger("dist_loss", "train", window_size=print_log_freq)
     action_loss_logger = Logger("action_loss", "train", window_size=print_log_freq)
@@ -278,10 +291,24 @@ def train(
         )
 
         losses["total_loss"].backward()
-
-        # 梯度裁剪防止爆炸（特别是Mamba中的cumsum操作）
+        
+        # ========= Global Gradient Clip Using Collected Gradients =========
         if max_grad_norm is not None and max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            global_grad_vector = torch.cat(global_grad_list)
+            total_norm = global_grad_vector.norm(2)
+
+            if total_norm > max_grad_norm:
+                scale = max_grad_norm / (total_norm + 1e-6)
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p.grad.mul_(scale)
+
+        global_grad_list.clear()
+        # =================================================================
+
+        # # 梯度裁剪防止爆炸（特别是Mamba中的cumsum操作）
+        # if max_grad_norm is not None and max_grad_norm > 0:
+        #     torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
         optimizer.step()
 
@@ -674,6 +701,9 @@ def train_nomad(
             # Logging
             loss_cpu = loss.item()
             tepoch.set_postfix(loss=loss_cpu)
+            # wandb.log({"total_loss": loss_cpu}, step=epoch)
+            # wandb.log({"dist_loss": dist_loss.item()}, step=epoch)
+            # wandb.log({"diffusion_loss": diffusion_loss.item()}, step=epoch)
             wandb.log({"total_loss": loss_cpu})
             wandb.log({"dist_loss": dist_loss.item()})
             wandb.log({"diffusion_loss": diffusion_loss.item()})
@@ -702,6 +732,7 @@ def train_nomad(
                         print(f"(epoch {epoch}) (batch {i}/{num_batches - 1}) {logger.display()}")
 
                 if use_wandb and i % wandb_log_freq == 0 and wandb_log_freq != 0:
+                    # wandb.log(data_log, step=epoch, commit=True)
                     wandb.log(data_log, commit=True)
 
             if image_log_freq != 0 and i % image_log_freq == 0:
@@ -878,6 +909,9 @@ def evaluate_nomad(
             loss_cpu = rand_mask_loss.item()
             tepoch.set_postfix(loss=loss_cpu)
 
+            # wandb.log({"diffusion_eval_loss (random masking)": rand_mask_loss}, step=epoch)
+            # wandb.log({"diffusion_eval_loss (no masking)": no_mask_loss}, step=epoch)
+            # wandb.log({"diffusion_eval_loss (goal masking)": goal_mask_loss}, step=epoch)
             wandb.log({"diffusion_eval_loss (random masking)": rand_mask_loss})
             wandb.log({"diffusion_eval_loss (no masking)": no_mask_loss})
             wandb.log({"diffusion_eval_loss (goal masking)": goal_mask_loss})
@@ -906,6 +940,7 @@ def evaluate_nomad(
                         print(f"(epoch {epoch}) (batch {i}/{num_batches - 1}) {logger.display()}")
 
                 if use_wandb and i % wandb_log_freq == 0 and wandb_log_freq != 0:
+                    # wandb.log(data_log, step=epoch, commit=True)
                     wandb.log(data_log, commit=True)
 
             if image_log_freq != 0 and i % image_log_freq == 0:
@@ -1183,4 +1218,5 @@ def visualize_diffusion_action_distribution(
         wandb_list.append(wandb.Image(save_path))
         plt.close(fig)
     if len(wandb_list) > 0 and use_wandb:
+        # wandb.log({f"{eval_type}_action_samples": wandb_list}, step=epoch, commit=False)
         wandb.log({f"{eval_type}_action_samples": wandb_list}, commit=False)

@@ -253,16 +253,18 @@ def main(config):
     else:
         raise ValueError(f"Model {config['model']} not supported")
 
-    if config["clipping"]:
-        print("Clipping gradients to", config["max_norm"])
-        for p in model.parameters():
-            if not p.requires_grad:
-                continue
-            p.register_hook(
-                lambda grad: torch.clamp(
-                    grad, -1 * config["max_norm"], config["max_norm"]
-                )
-            )
+    # if config["clipping"]:
+    #     print("Clipping gradients to", config["max_norm"])
+    #     for p in model.parameters():
+    #         if not p.requires_grad:
+    #             continue
+    #         p.register_hook(
+    #             lambda grad: torch.clamp(
+    #                 grad, -1 * config["max_norm"], config["max_norm"]
+    #             )
+    #         )
+    if config.get("clipping", False):
+        print("Will apply global gradient clipping with max_norm =", config.get("max_norm", 1.0))
 
     lr = float(config["lr"])
     config["optimizer"] = config["optimizer"].lower()
@@ -428,11 +430,11 @@ if __name__ == "__main__":
         wandb.login()
         wandb.init(
             project=config["project_name"],
-            settings=wandb.Settings(start_method="fork"),
-            entity="coisinic243",  # 使用你的wandb账户
+            settings=wandb.Settings(), 
+            entity="coisinic243-beijing-university-of-technology",  # 使用你的wandb账户
         )
         wandb.save(args.config, policy="now")  # save the config file
-        wandb.run.name = config["vint-mamba"]
+        wandb.run.name = config.get("run_name", f"{config['project_name']}_{int(time.time())}")
         # update the wandb args with the training configurations
         if wandb.run:
             wandb.config.update(config)

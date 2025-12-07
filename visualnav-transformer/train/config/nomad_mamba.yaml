@@ -1,0 +1,90 @@
+project_name: nomad-mamba
+run_name: nomad-mamba
+
+# training setup
+use_wandb: True
+train: True
+batch_size: 64
+eval_batch_size: 64
+epochs: 120
+gpu_ids: [0]
+num_workers: 12
+lr: 1e-4
+optimizer: adamw
+clipping: True
+max_norm: 1.0
+scheduler: "cosine"
+warmup: True 
+warmup_epochs: 10
+cyclic_period: 0
+plateau_patience: 0
+plateau_factor: 0.5
+seed: 0
+
+# model params
+model_type: nomad
+vision_encoder: nomad_mamba  
+encoding_size: 256
+obs_encoder: efficientnet-b0
+attn_unet: False
+cond_predict_scale: False
+
+# Mamba特定参数（替代Transformer参数）
+mamba_d_state: 64
+mamba_d_conv: 4
+mamba_expand: 2
+mamba_headdim: 64
+mamba_num_blocks: 4
+mamba_chunk_size: 256
+mamba_use_mem_eff: True
+
+# U-Net参数（Diffusion Policy部分，保持不变）
+down_dims: [64, 128, 256]
+
+# diffusion model params
+num_diffusion_iters: 10
+
+# mask 
+goal_mask_prob: 0.5
+
+# normalization for the action space
+normalize: True
+
+# context
+context_type: temporal
+context_size: 8
+alpha: 5e-5
+
+# distance bounds for distance and action and distance predictions 
+distance:
+  min_dist_cat: 0
+  max_dist_cat: 20
+action:
+  min_dist_cat: 3
+  max_dist_cat: 20
+
+# action output params
+len_traj_pred: 8
+learn_angle: False
+
+# dataset specific parameters
+image_size: [96, 96] # width, height
+goal_type: "image"
+
+datasets:
+  go_stanford:
+    data_folder: /workspace/datasets/go_stanford
+    train: vint_train/data/data_splits/go_stanford/train/
+    test: vint_train/data/data_splits/go_stanford/test/
+    end_slack: 0
+    goals_per_obs: 2
+    negative_mining: True
+
+# logging stuff
+print_log_freq: 100
+image_log_freq: 1000
+num_images_log: 8
+pairwise_test_freq: 0
+eval_fraction: 0.25
+wandb_log_freq: 10
+eval_freq: 1

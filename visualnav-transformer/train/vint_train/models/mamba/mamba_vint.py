@@ -195,7 +195,7 @@ class MambaViNT(BaseModel):
 
         # 2. 提取观测序列特征
         obs_img = torch.split(obs_img, 3, dim=1)  # 分割为context_size+1帧
-        obs_img = torch.concat(obs_img, dim=0)  # [batch*(context+1), 3, H, W]
+        obs_img = torch.cat(obs_img, dim=0)  # [batch*(context+1), 3, H, W]
 
         obs_encoding = self.obs_encoder.extract_features(obs_img)
         obs_encoding = self.obs_encoder._avg_pooling(obs_encoding)
@@ -371,7 +371,16 @@ class MambaViNT(BaseModel):
         action_pred = action_pred.reshape(
             (action_pred.shape[0], self.len_trajectory_pred, self.num_action_params)
         )
-        action_pred[:, :, :2] = torch.cumsum(action_pred[:, :, :2], dim=1)
+        # action_pred[:, :, :2] = torch.cumsum(action_pred[:, :, :2], dim=1)
+        
+        # cumsum 操作 - 为避免 AMP/half 精度问题，临时用 float32 计算再还原 dtype
+        if action_pred.dtype in (torch.float16, torch.bfloat16):
+            tmp = action_pred[:, :, :2].to(torch.float32)
+            tmp = torch.cumsum(tmp, dim=1)
+            action_pred[:, :, :2] = tmp.to(action_pred.dtype)
+        else:
+            action_pred[:, :, :2] = torch.cumsum(action_pred[:, :, :2], dim=1)
+
         if self.learn_angle:
             action_pred[:, :, 2:] = F.normalize(action_pred[:, :, 2:].clone(), dim=-1)
 

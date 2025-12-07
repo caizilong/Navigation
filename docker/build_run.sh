@@ -3,7 +3,7 @@
 set -e  # 出现错误时立即退出
 
 # 容器名称，与 docker-compose.yml 中保持一致
-CONTAINER_NAME="cz"
+CONTAINER_NAME="cai"
 
 echo "🔧 [1/3] 构建 Docker 镜像..."
 # 使用 docker-compose 构建镜像
