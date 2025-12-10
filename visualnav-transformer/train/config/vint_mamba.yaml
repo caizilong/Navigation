@@ -1,12 +1,12 @@
-project_name: vint-mamba
+project_name: nomad-mamba
 run_name: vint-mamba
 
 # training setup
 use_wandb: True
 train: True
-batch_size: 128
+batch_size: 64
 eval_batch_size: 64
-epochs: 100
+epochs: 200
 gpu_ids: [0]
 num_workers: 12
 lr: 1e-4 
@@ -15,11 +15,11 @@ clipping: True
 max_norm: 1.
 scheduler: "cosine"
 warmup: True 
-warmup_epochs: 4
+warmup_epochs: 10
 cyclic_period: 10
 plateau_patience: 3
 plateau_factor: 0.5
-seed: 0
+seed: 42
 
 # model params
 model_type: mamba_vint  # Use Mamba-based model

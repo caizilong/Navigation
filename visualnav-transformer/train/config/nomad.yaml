@@ -5,13 +5,13 @@ run_name: nomad-mamba
 use_wandb: True # set to false if you don't want to log to wandb
 train: True
 batch_size: 64
-# eval_batch_size: 64
-epochs: 120
+eval_batch_size: 64
+epochs: 200
 gpu_ids: [0]
 num_workers: 12
 lr: 1e-4
 optimizer: adamw
-clipping: False
+clipping: True
 max_norm: 1.
 scheduler: "cosine"
 warmup: True 
@@ -19,7 +19,7 @@ warmup_epochs: 10
 cyclic_period: 0
 plateau_patience: 0
 plateau_factor: 0.5
-seed: 0
+seed: 42
 
 # model params
 model_type: nomad
@@ -44,7 +44,7 @@ normalize: True
 
 # context
 context_type: temporal
-context_size: 3 # 5
+context_size: 5 # 5
 alpha: 1e-4
 
 # distance bounds for distance and action and distance predictions 
@@ -52,8 +52,8 @@ distance:
   min_dist_cat: 0
   max_dist_cat: 20
 action:
-  min_dist_cat: 3
-  max_dist_cat: 20
+  min_dist_cat: 5
+  max_dist_cat: 50
 
 # action output params
 len_traj_pred: 8
@@ -64,9 +64,9 @@ image_size: [96, 96] # width, height
 
 datasets:
   go_stanford:
-    data_folder: /workspace/datasets/go_stanford
-    train: vint_train/data/data_splits/go_stanford/train/
-    test: vint_train/data/data_splits/go_stanford/test/
+    data_folder: /workspace/datasets/go_stanford5
+    train: vint_train/data/data_splits/go_stanford5/train/
+    test: vint_train/data/data_splits/go_stanford5/test/
     end_slack: 0
     goals_per_obs: 2
     negative_mining: True
@@ -125,10 +125,10 @@ datasets:
 
 # logging stuff
 ## =0 turns off
-print_log_freq: 100 # in iterations
-image_log_freq: 1000 #0 # in iterations
+print_log_freq: 500 # in iterations
+image_log_freq: 5000 #0 # in iterations
 num_images_log: 8 #0 
 pairwise_test_freq: 0 # in epochs
 eval_fraction: 0.25
-wandb_log_freq: 10 # in iterations
+wandb_log_freq: 50 # in iterations
 eval_freq: 1 # in epochs
