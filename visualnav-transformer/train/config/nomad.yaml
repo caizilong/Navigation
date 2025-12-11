@@ -1,11 +1,11 @@
 project_name: nomad-mamba
-run_name: nomad-mamba
+run_name: nomad
 
 # training setup
 use_wandb: True # set to false if you don't want to log to wandb
 train: True
-batch_size: 64
-eval_batch_size: 64
+batch_size: 256
+eval_batch_size: 256
 epochs: 200
 gpu_ids: [0]
 num_workers: 12
@@ -19,7 +19,7 @@ warmup_epochs: 10
 cyclic_period: 0
 plateau_patience: 0
 plateau_factor: 0.5
-seed: 42
+seed: 0
 
 # model params
 model_type: nomad
@@ -52,8 +52,8 @@ distance:
   min_dist_cat: 0
   max_dist_cat: 20
 action:
-  min_dist_cat: 5
-  max_dist_cat: 50
+  min_dist_cat: 3
+  max_dist_cat: 20
 
 # action output params
 len_traj_pred: 8
