@@ -5,6 +5,7 @@ import numpy as np
 import yaml
 import time
 import pdb
+import copy
 
 import torch
 import torch.nn as nn
@@ -95,6 +96,10 @@ def main(config):
 
         for data_split_type in ["train", "test"]:
             if data_split_type in data_config:
+                # [新增] 仅在训练集上应用增强
+                augmentations = config.get(
+                    "augmentations", None) if data_split_type == "train" else None
+
                 dataset = ViNT_Dataset(
                     data_folder=data_config["data_folder"],
                     data_split_folder=data_config[data_split_type],
@@ -114,6 +119,7 @@ def main(config):
                     goals_per_obs=data_config["goals_per_obs"],
                     normalize=config["normalize"],
                     goal_type=config["goal_type"],
+                    augmentations=augmentations,  # [新增] 传入增强参数
                 )
                 if data_split_type == "train":
                     train_dataset.append(dataset)
@@ -207,6 +213,9 @@ def main(config):
                 mamba_num_blocks=config.get("mamba_num_blocks", 2),
                 mamba_chunk_size=config.get("mamba_chunk_size", 256),
                 mamba_use_mem_eff=config.get("mamba_use_mem_eff", True),
+                # [新增] 传入正则化参数
+                mamba_dropout=config.get("mamba_dropout", 0.0),
+                mamba_drop_path=config.get("mamba_drop_path", 0.0),
             )
         elif config["vision_encoder"] == "vib":
             vision_encoder = ViB(
@@ -264,7 +273,79 @@ def main(config):
     #             )
     #         )
     if config.get("clipping", False):
-        print("Will apply global gradient clipping with max_norm =", config.get("max_norm", 1.0))
+        print("Will apply global gradient clipping with max_norm =",
+              config.get("max_norm", 1.0))
+
+    # --- 添加参数分组函数 ---
+    def build_optimizer(model, config):
+        """
+        构建优化器，将 weight_decay 应用于权重矩阵，但跳过 Bias 和 Normalization 层
+        """
+        lr = float(config["lr"])
+        weight_decay = config.get("weight_decay", 0.0)
+
+        if weight_decay == 0.0:
+            # 如果没有设置 weight_decay，使用默认优化器
+            optimizer_type = config["optimizer"].lower()
+            if optimizer_type == "adam":
+                return Adam(model.parameters(), lr=lr, betas=(0.9, 0.98))
+            elif optimizer_type == "adamw":
+                return AdamW(model.parameters(), lr=lr)
+            elif optimizer_type == "sgd":
+                return torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+            else:
+                raise ValueError(f"Optimizer {optimizer_type} not supported")
+
+        # 分组参数：让 bias 和 layernorm 不参与 weight_decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (nn.Linear, nn.Conv2d, nn.Conv1d)
+        blacklist_weight_modules = (nn.LayerNorm, nn.GroupNorm, nn.BatchNorm2d)
+
+        for mn, m in model.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn  # full param name
+
+                if pn.endswith('bias'):
+                    # 所有 bias 都不衰减
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # 权重矩阵参与衰减
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # Norm层的权重不衰减
+                    no_decay.add(fpn)
+                elif "A_log" in pn or "D" in pn:
+                    # Mamba 特有的参数 (SSM parameters)，通常不建议衰减
+                    no_decay.add(fpn)
+
+        # 验证参数覆盖情况
+        param_dict = {pn: p for pn, p in model.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(
+            inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+
+        # 创建优化器参数组
+        optim_groups = [
+            {"params": [param_dict[pn] for pn in sorted(
+                list(decay))], "weight_decay": weight_decay},
+            {"params": [param_dict[pn]
+                        for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+        ]
+
+        print(
+            f"Optimizer: {len(decay)} params with weight_decay={weight_decay}, {len(no_decay)} params with weight_decay=0.0")
+
+        optimizer_type = config["optimizer"].lower()
+        if optimizer_type == "adam":
+            return Adam(optim_groups, lr=lr, betas=(0.9, 0.98))
+        elif optimizer_type == "adamw":
+            return AdamW(optim_groups, lr=lr)
+        elif optimizer_type == "sgd":
+            return torch.optim.SGD(optim_groups, lr=lr, momentum=0.9)
+        else:
+            raise ValueError(f"Optimizer {optimizer_type} not supported")
 
     lr = float(config["lr"])
     config["optimizer"] = config["optimizer"].lower()
@@ -430,7 +511,7 @@ if __name__ == "__main__":
         wandb.login()
         wandb.init(
             project=config["project_name"],
-            settings=wandb.Settings(), 
+            settings=wandb.Settings(),
             entity="coisinic243-beijing-university-of-technology",  # 使用你的wandb账户
         )
         wandb.save(args.config, policy="now")  # save the config file

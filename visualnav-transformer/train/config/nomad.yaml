@@ -4,8 +4,8 @@ run_name: nomad
 # training setup
 use_wandb: True # set to false if you don't want to log to wandb
 train: True
-batch_size: 256
-eval_batch_size: 256
+batch_size: 128
+eval_batch_size: 32
 epochs: 200
 gpu_ids: [0]
 num_workers: 12
@@ -44,7 +44,7 @@ normalize: True
 
 # context
 context_type: temporal
-context_size: 5 # 5
+context_size: 6 # 5
 alpha: 1e-4
 
 # distance bounds for distance and action and distance predictions 
@@ -64,9 +64,9 @@ image_size: [96, 96] # width, height
 
 datasets:
   go_stanford:
-    data_folder: /workspace/datasets/go_stanford5
-    train: vint_train/data/data_splits/go_stanford5/train/
-    test: vint_train/data/data_splits/go_stanford5/test/
+    data_folder: /home/zhang1037/project/cai/Navigation/datasets/go_stanford0
+    train: vint_train/data/data_splits/go_stanford0/train/
+    test: vint_train/data/data_splits/go_stanford0/test/
     end_slack: 0
     goals_per_obs: 2
     negative_mining: True
@@ -107,28 +107,28 @@ datasets:
 #     end_slack: 3 # because many trajectories end in collisions
 #     goals_per_obs: 1
 #     negative_mining: True
-  # private datasets (uncomment if you have access)
-  # seattle:
-  #   data_folder: /home/czl/nomad_dataset/seattle/
-  #   train: /home/czl/data_splits/seattle/train/
-  #   test: /home/czl/data_splits/seattle/test/
-  #   end_slack: 0
-  #   goals_per_obs: 1
-  #   negative_mining: True
-  # scand:
-  #   data_folder: /home/czl/nomad_dataset/scand/
-  #   train: /home/czl/data_splits/scand/train/
-  #   test: /home/czl/data_splits/scand/test/
-  #   end_slack: 0
-  #   goals_per_obs: 1
-  #   negative_mining: True
+#   private datasets (uncomment if you have access)
+#   seattle:
+#     data_folder: /home/czl/nomad_dataset/seattle/
+#     train: /home/czl/data_splits/seattle/train/
+#     test: /home/czl/data_splits/seattle/test/
+#     end_slack: 0
+#     goals_per_obs: 1
+#     negative_mining: True
+#   scand:
+#     data_folder: /home/czl/nomad_dataset/scand/
+#     train: /home/czl/data_splits/scand/train/
+#     test: /home/czl/data_splits/scand/test/
+#     end_slack: 0
+#     goals_per_obs: 1
+#     negative_mining: True
 
 # logging stuff
 ## =0 turns off
-print_log_freq: 500 # in iterations
-image_log_freq: 5000 #0 # in iterations
+print_log_freq: 1000 # in iterations
+image_log_freq: 10000 #0 # in iterations
 num_images_log: 8 #0 
 pairwise_test_freq: 0 # in epochs
 eval_fraction: 0.25
-wandb_log_freq: 50 # in iterations
+wandb_log_freq: 10 # in iterations
 eval_freq: 1 # in epochs

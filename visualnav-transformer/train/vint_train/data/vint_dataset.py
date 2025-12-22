@@ -10,6 +10,7 @@ import lmdb
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
+from torchvision import transforms  # [新增] 用于数据增强
 
 from vint_train.data.data_utils import (
     img_path_to_data,
@@ -17,6 +18,7 @@ from vint_train.data.data_utils import (
     get_data_path,
     to_local_coords,
 )
+
 
 class ViNT_Dataset(Dataset):
     def __init__(
@@ -40,6 +42,7 @@ class ViNT_Dataset(Dataset):
         normalize: bool = True,
         obs_type: str = "image",
         goal_type: str = "image",
+        augmentations: Optional[Dict] = None,  # [新增] 数据增强参数
     ):
         """
         Main ViNT dataset class
@@ -64,7 +67,7 @@ class ViNT_Dataset(Dataset):
         self.data_folder = data_folder
         self.data_split_folder = data_split_folder
         self.dataset_name = dataset_name
-        
+
         traj_names_file = os.path.join(data_split_folder, "traj_names.txt")
         with open(traj_names_file, "r") as f:
             file_lines = f.read()
@@ -101,6 +104,27 @@ class ViNT_Dataset(Dataset):
         self.obs_type = obs_type
         self.goal_type = goal_type
 
+        # [新增] 设置数据增强
+        self.augmentations = augmentations
+        self.is_train = "train" in data_split_folder  # 通过路径判断是否为训练集
+        if self.augmentations is not None and self.is_train:
+            self.augment_transform = transforms.Compose([
+                transforms.ColorJitter(
+                    brightness=self.augmentations.get("color_jitter", 0.0),
+                    contrast=self.augmentations.get("color_jitter", 0.0),
+                    saturation=self.augmentations.get("color_jitter", 0.0),
+                    hue=min(0.05, self.augmentations.get(
+                        "color_jitter", 0.0) / 6)  # hue 范围较小
+                ),
+                transforms.RandomGrayscale(
+                    p=self.augmentations.get("p_gray", 0.0)),
+                transforms.RandomApply([
+                    transforms.GaussianBlur(kernel_size=3)
+                ], p=self.augmentations.get("p_blur", 0.0)),
+            ])
+        else:
+            self.augment_transform = None
+
         # load data/data_config.yaml
         with open(
             os.path.join(os.path.dirname(__file__), "data_config.yaml"), "r"
@@ -117,7 +141,7 @@ class ViNT_Dataset(Dataset):
         self.trajectory_cache = {}
         self._load_index()
         self._build_caches()
-        
+
         if self.learn_angle:
             self.num_action_params = 3
         else:
@@ -127,7 +151,7 @@ class ViNT_Dataset(Dataset):
         state = self.__dict__.copy()
         state["_image_cache"] = None
         return state
-    
+
     def __setstate__(self, state):
         self.__dict__ = state
         self._build_caches()
@@ -230,11 +254,26 @@ class ViNT_Dataset(Dataset):
         try:
             with self._image_cache.begin() as txn:
                 image_buffer = txn.get(image_path.encode())
+                if image_buffer is None:
+                    raise ValueError(f"Image not found in cache: {image_path}")
                 image_bytes = bytes(image_buffer)
             image_bytes = io.BytesIO(image_bytes)
-            return img_path_to_data(image_bytes, self.image_size)
-        except TypeError:
-            print(f"Failed to load image {image_path}")
+
+            # [修改] 在 img_path_to_data 之前先加载为 PIL Image
+            from PIL import Image
+            pil_image = Image.open(image_bytes)
+
+            # [新增] 应用增强（仅在训练时）
+            if self.augment_transform is not None and self.is_train:
+                pil_image = self.augment_transform(pil_image)
+
+            # 转换为 tensor
+            from vint_train.data.data_utils import resize_and_aspect_crop
+            return resize_and_aspect_crop(pil_image, self.image_size)
+        except Exception as e:
+            print(f"Failed to load image {image_path}: {str(e)}")
+            raise RuntimeError(
+                f"Failed to load image {image_path}. This is a critical data loading error that should be investigated.") from e
 
     def _compute_actions(self, traj_data, curr_time, goal_time):
         start_index = curr_time
@@ -264,7 +303,7 @@ class ViNT_Dataset(Dataset):
             actions = np.concatenate([waypoints[1:], yaw[:, None]], axis=-1)
         else:
             actions = waypoints[1:]
-        
+
         if self.normalize:
             actions[:, :2] /= self.data_config["metric_waypoint_spacing"] * self.waypoint_spacing
             goal_pos /= self.data_config["metric_waypoint_spacing"] * self.waypoint_spacing
@@ -320,12 +359,26 @@ class ViNT_Dataset(Dataset):
         else:
             raise ValueError(f"Invalid context type {self.context_type}")
 
-        obs_image = torch.cat([
-            self._load_image(f, t) for f, t in context
-        ])
+        # Load context images with error handling
+        context_images = []
+        for f, t in context:
+            try:
+                img = self._load_image(f, t)
+                context_images.append(img)
+            except RuntimeError as e:
+                print(
+                    f"Error loading context image at trajectory={f}, time={t}")
+                raise
+
+        obs_image = torch.cat(context_images)
 
         # Load goal image
-        goal_image = self._load_image(f_goal, goal_time)
+        try:
+            goal_image = self._load_image(f_goal, goal_time)
+        except RuntimeError as e:
+            print(
+                f"Error loading goal image at trajectory={f_goal}, time={goal_time}")
+            raise
 
         # Load other trajectory data
         curr_traj_data = self._get_trajectory(f_curr)
@@ -345,11 +398,11 @@ class ViNT_Dataset(Dataset):
         else:
             distance = (goal_time - curr_time) // self.waypoint_spacing
             assert (goal_time - curr_time) % self.waypoint_spacing == 0, f"{goal_time} and {curr_time} should be separated by an integer multiple of {self.waypoint_spacing}"
-        
+
         actions_torch = torch.as_tensor(actions, dtype=torch.float32)
         if self.learn_angle:
             actions_torch = calculate_sin_cos(actions_torch)
-        
+
         action_mask = (
             (distance < self.max_action_distance) and
             (distance > self.min_action_distance) and

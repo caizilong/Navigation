@@ -14,6 +14,29 @@ from vint_train.models.mamba.mamba2 import Mamba2
 # 使用官方 mamba_ssm.Block（与 MTIL 一致）
 from mamba_ssm.modules.block import Block
 
+# [新增] 导入 DropPath
+try:
+    from timm.models.layers import DropPath
+except ImportError:
+    print("Warning: timm not installed. DropPath will be disabled. Install with: pip install timm")
+    # 如果没有 timm，定义一个简单的 DropPath
+
+    class DropPath(nn.Module):
+        def __init__(self, drop_prob=0.):
+            super().__init__()
+            self.drop_prob = drop_prob
+
+        def forward(self, x):
+            if self.drop_prob == 0. or not self.training:
+                return x
+            keep_prob = 1 - self.drop_prob
+            shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+            random_tensor = keep_prob + \
+                torch.rand(shape, dtype=x.dtype, device=x.device)
+            random_tensor.floor_()
+            output = x.div(keep_prob) * random_tensor
+            return output
+
 
 class NoMaD_Mamba(nn.Module):
     """
@@ -39,6 +62,9 @@ class NoMaD_Mamba(nn.Module):
         mamba_num_blocks: Optional[int] = 2,  # NoMaD原本用2层Transformer
         mamba_chunk_size: Optional[int] = 256,
         mamba_use_mem_eff: Optional[bool] = True,
+        # [新增] 正则化参数
+        mamba_dropout: Optional[float] = 0.0,      # Dropout比例
+        mamba_drop_path: Optional[float] = 0.0,    # DropPath比例
     ) -> None:
         """
         NoMaD Mamba Encoder
@@ -48,6 +74,8 @@ class NoMaD_Mamba(nn.Module):
             obs_encoder: 视觉编码器类型
             obs_encoding_size: 编码维度
             mamba_*: Mamba参数（与MambaViNT一致）
+            mamba_dropout: Dropout比例
+            mamba_drop_path: DropPath比例（Stochastic Depth）
         """
         super().__init__()
         self.obs_encoding_size = obs_encoding_size
@@ -83,6 +111,7 @@ class NoMaD_Mamba(nn.Module):
             self.compress_goal_enc = nn.Identity()
 
         # 2. Mamba时序建模（替换TransformerEncoder）
+        # [修改] 添加 Dropout 支持
         def mixer_fn(dim):
             return Mamba2(
                 d_model=dim,
@@ -94,24 +123,38 @@ class NoMaD_Mamba(nn.Module):
                 use_mem_eff_path=mamba_use_mem_eff,
             )
 
+        # [修改] MLP 中添加 Dropout
         def mlp_fn(dim):
             hidden_dim = 4 * dim
             return nn.Sequential(
                 nn.Linear(dim, hidden_dim),
                 nn.GELU(),
+                nn.Dropout(
+                    mamba_dropout) if mamba_dropout > 0 else nn.Identity(),  # [新增]
                 nn.Linear(hidden_dim, dim),
+                nn.Dropout(
+                    mamba_dropout) if mamba_dropout > 0 else nn.Identity(),  # [新增]
             )
 
+        # [修改] 为每个 Block 添加 DropPath
+        # 使用 stochastic depth: 每一层的 drop_path 概率递增
+        dpr = [x.item() for x in torch.linspace(0, mamba_drop_path,
+                                                mamba_num_blocks)]  # stochastic depth decay rule
+
         self.mamba_blocks = nn.ModuleList([
-            Block(
-                dim=self.obs_encoding_size,
-                mixer_cls=mixer_fn,
-                mlp_cls=mlp_fn,
-                norm_cls=nn.LayerNorm,
-                fused_add_norm=True,  # 🚀 开启融合优化 (加速 20-30%)
-                residual_in_fp32=True,  # 🚀 开启 FP32 残差 (提升稳定性)
-            )
-            for _ in range(mamba_num_blocks)
+            nn.ModuleDict({
+                'block': Block(
+                    dim=self.obs_encoding_size,
+                    mixer_cls=mixer_fn,
+                    mlp_cls=mlp_fn,
+                    norm_cls=nn.LayerNorm,
+                    fused_add_norm=True,  # 🚀 开启融合优化 (加速 20-30%)
+                    residual_in_fp32=True,  # 🚀 开启 FP32 残差 (提升稳定性)
+                ),
+                # [新增]
+                'drop_path': DropPath(dpr[i]) if dpr[i] > 0. else nn.Identity()
+            })
+            for i in range(mamba_num_blocks)
         ])
 
         # # 3. Goal Mask定义（保留NoMaD的mask机制）
@@ -145,7 +188,6 @@ class NoMaD_Mamba(nn.Module):
             (1 - goal_mask.float()) * ((self.context_size + 2) / (self.context_size + 1))
         ], dim=0)
         self.register_buffer("avg_pool_mask", avg_pool_mask, persistent=True)
-
 
     def forward(
         self,
@@ -211,9 +253,17 @@ class NoMaD_Mamba(nn.Module):
                 obs_encoding[mask_indices, -1, :] = 0.0
 
         # 4. 通过Mamba块处理（替代Transformer）
+        # [修改] 应用 DropPath
         residual = None
-        for block in self.mamba_blocks:
+        for mamba_dict in self.mamba_blocks:
+            block = mamba_dict['block']
+            drop_path = mamba_dict['drop_path']
+
+            # Mamba block forward
             obs_encoding, residual = block(obs_encoding, residual)
+
+            # [新增] 应用 DropPath
+            obs_encoding = drop_path(obs_encoding)
 
         # 5. 应用平均池化mask（与NoMaD_ViNT一致）
         if input_goal_mask is not None:

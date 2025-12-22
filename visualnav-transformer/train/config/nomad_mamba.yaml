@@ -5,21 +5,28 @@ run_name: nomad-mamba
 use_wandb: True
 train: True
 batch_size: 256
-eval_batch_size: 256
-epochs: 200
+eval_batch_size: 128
+epochs: 100
 gpu_ids: [0]
-num_workers: 12
+num_workers: 8
 lr: 1e-4
 optimizer: adamw
 clipping: True
 max_norm: 1.0
-scheduler: "cosine"
+scheduler: "cosine"  
 warmup: True 
-warmup_epochs: 10
-cyclic_period: 0
+warmup_epochs: 5  
+cyclic_period: 0  
 plateau_patience: 0
 plateau_factor: 0.5
 seed: 0
+
+# 3. 增加权重衰减 (Weight Decay)
+weight_decay: 0.05  #  0.01 ~ 0.05
+
+# 6. EMA (Exponential Moving Average) 参数 - 启用以提高泛化性能
+use_ema: False  # 启用EMA，显著提升测试性能
+ema_decay: 0.999  # 标准值，越接近 1 越平滑
 
 # model params
 model_type: nomad
@@ -38,7 +45,11 @@ mamba_num_blocks: 4
 mamba_chunk_size: 256
 mamba_use_mem_eff: True
 
-# U-Net参数（Diffusion Policy部分，保持不变）
+# 4. Mamba 模型的正则化参数 - 增加Dropout防止过拟合
+mamba_dropout: 0.15     # 增加线性层 Dropout
+mamba_drop_path: 0.15   # 增加Stochastic Depth (层级随机丢弃)
+
+# U-Net参数
 down_dims: [64, 128, 256]
 
 # diffusion model params
@@ -52,7 +63,7 @@ normalize: True
 
 # context
 context_type: temporal
-context_size: 10
+context_size: 3
 alpha: 1e-4
 
 # distance bounds for distance and action and distance predictions 
@@ -71,20 +82,34 @@ learn_angle: False
 image_size: [96, 96] # width, height
 goal_type: "image"
 
+# 5. 数据增强参数 - 增强强度以防止过拟合
+# 必须增强视觉输入的难度，防止模型死记硬背
+augmentations:
+  color_jitter: 0.4     # 增加到0.4，更强的亮度/对比度/饱和度扰动
+  p_blur: 0.15          # 增加模糊概率到15%
+  p_gray: 0.15          # 增加灰度概率到15%
+
 datasets:
   go_stanford:
-    data_folder: /workspace/datasets/go_stanford5
-    train: vint_train/data/data_splits/go_stanford5/train/
-    test: vint_train/data/data_splits/go_stanford5/test/
-    end_slack: 0
-    goals_per_obs: 2
-    negative_mining: True
+    data_folder: /home/zhang1037/project/cai/Navigation/datasets/go_stanford
+    train: vint_train/data/data_splits/go_stanford/train/
+    test: vint_train/data/data_splits/go_stanford/test/
+    end_slack: 0 # 允许预测轨迹终点与真实终点之间的最大容忍距离（单位：轨迹点索引）
+    goals_per_obs: 2 # 对每一个观测帧（observation），从其未来轨迹中随机采样多少个目标（goal）图像
+    negative_mining: True # 是否启用 ViNG 论文（Shah et al.）提出的负采样策略
+  recon:
+    data_folder: /home/zhang1037/project/cai/Navigation/datasets/recon000
+    train: vint_train/data/data_splits/recon000/train/ # path to train folder with traj_names.txt
+    test: vint_train/data/data_splits/recon000/test/ # path to test folder with traj_names.txt
+    end_slack: 3 # because many trajectories end in collisions
+    goals_per_obs: 1 # how many goals are sampled per observation
+    negative_mining: True # negative mining from the ViNG paper (Shah et al.)
 
 # logging stuff
-print_log_freq: 500
-image_log_freq: 5000
+print_log_freq: 1000
+image_log_freq: 10000
 num_images_log: 8
 pairwise_test_freq: 0
 eval_fraction: 0.25
-wandb_log_freq: 50
+wandb_log_freq: 10
 eval_freq: 1

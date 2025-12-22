@@ -155,7 +155,8 @@ def train_eval_loop(
 
         numbered_path = os.path.join(project_folder, f"{epoch}.pth")
         torch.save(checkpoint, latest_path)
-        torch.save(checkpoint, numbered_path)  # keep track of model at every epoch
+        # keep track of model at every epoch
+        torch.save(checkpoint, numbered_path)
 
     # Flush the last set of eval logs
     if use_wandb:
@@ -166,7 +167,7 @@ def train_eval_loop(
 def train_eval_loop_nomad(
     train_model: bool,
     model: nn.Module,
-    optimizer: Adam, 
+    optimizer: Adam,
     lr_scheduler: torch.optim.lr_scheduler._LRScheduler,
     noise_scheduler: DDPMScheduler,
     train_loader: DataLoader,
