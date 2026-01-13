@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import tqdm
 import io
 import lmdb
+from PIL import Image  # 移到文件顶部以避免每次 _load_image 调用时重复导入
 
 import torch
 from torch.utils.data import Dataset
@@ -17,6 +18,7 @@ from vint_train.data.data_utils import (
     calculate_sin_cos,
     get_data_path,
     to_local_coords,
+    resize_and_aspect_crop,  # 移到文件顶部以避免每次 _load_image 调用时重复导入
 )
 
 
@@ -259,16 +261,14 @@ class ViNT_Dataset(Dataset):
                 image_bytes = bytes(image_buffer)
             image_bytes = io.BytesIO(image_bytes)
 
-            # [修改] 在 img_path_to_data 之前先加载为 PIL Image
-            from PIL import Image
+            # 加载为 PIL Image（PIL.Image 已在文件顶部导入）
             pil_image = Image.open(image_bytes)
 
             # [新增] 应用增强（仅在训练时）
             if self.augment_transform is not None and self.is_train:
                 pil_image = self.augment_transform(pil_image)
 
-            # 转换为 tensor
-            from vint_train.data.data_utils import resize_and_aspect_crop
+            # 转换为 tensor（resize_and_aspect_crop 已在文件顶部导入）
             return resize_and_aspect_crop(pil_image, self.image_size)
         except Exception as e:
             print(f"Failed to load image {image_path}: {str(e)}")

@@ -139,6 +139,8 @@ def main(config):
         num_workers=config["num_workers"],
         drop_last=False,
         persistent_workers=True,
+        pin_memory=True,  # 加速 CPU->GPU 数据传输
+        prefetch_factor=2,  # 预取下一批数据，减少 GPU 等待时间
     )
 
     if "eval_batch_size" not in config:
