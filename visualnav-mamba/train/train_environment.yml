@@ -1,0 +1,31 @@
+name: mamba_train
+channels:
+- defaults
+- pytorch
+dependencies:
+- python=3.10
+- numpy
+- matplotlib
+- ipykernel
+- pip
+- pip:
+  - torch
+  - torchvision
+  - tqdm==4.64.0
+  - git+https://github.com/ildoonet/pytorch-gradual-warmup-lr.git
+  - opencv-python==4.6.0.66
+  - h5py==3.6.0
+  - wandb
+  - prettytable
+  - efficientnet-pytorch
+  - warmup-scheduler
+  - diffusers
+  - lmdb 
+  - vit-pytorch
+  - positional-encodings
+
+
+
+  
+
+
