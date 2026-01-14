@@ -191,6 +191,9 @@ def main(config):
     vision_encoder = NoMaD_Mamba(
         obs_encoding_size=config["encoding_size"],
         context_size=config["context_size"],
+        obs_encoder=config.get("obs_encoder", "efficientnet_b0"),
+        goal_encoder=config.get("goal_encoder", None),
+        pretrained=config.get("pretrained", True),
         mamba_d_state=config.get("mamba_d_state", 64),
         mamba_d_conv=config.get("mamba_d_conv", 4),
         mamba_expand=config.get("mamba_expand", 2),

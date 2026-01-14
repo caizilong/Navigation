@@ -1,7 +1,10 @@
 #!/bin/bash
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate mamba
-export PYTHONPATH="/workspace/visualnav-transformer/diffusion_policy:$PYTHONPATH"
+export PYTHONPATH="/home/zhang1037/project/cai/Navigation/visualnav-transformer/diffusion_policy:$PYTHONPATH"
+
+# 设置 HuggingFace 镜像解决网络超时问题
+export HF_ENDPOINT="https://hf-mirror.com"
 
 # 使用 nohup 后台运行，日志输出到 training.log
 nohup python3 train.py -c ./config/nomad_mamba.yaml > training.log 2>&1 &
