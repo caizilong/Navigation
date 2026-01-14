@@ -1,9 +1,10 @@
 import numpy as np
 import os
 from PIL import Image
-from typing import Any, Iterable, Tuple
+from typing import Any, Iterable, Tuple, List
 
 import torch
+from torch.utils.data import Sampler, ConcatDataset
 from torchvision import transforms
 import torchvision.transforms.functional as TF
 import torch.nn.functional as F
@@ -15,7 +16,71 @@ IMAGE_ASPECT_RATIO = (
     4 / 3
 )  # all images are centered cropped to a 4:3 aspect ratio in training
 
-
+class InterleavedSampler(Sampler):
+    """
+    交错采样器：将多个数据集的样本按块（chunk）交错采样，
+    而不是完全随机采样。这样可以显著减少数据集之间的切换频率，
+    提高页面缓存命中率，从而提升多数据集联合训练时的 GPU 利用率。
+    
+    工作原理：
+    1. 将每个数据集的索引分成多个 chunk
+    2. 随机打乱 chunk 的顺序
+    3. 在每个 chunk 内部随机打乱样本顺序
+    4. 这样每个 chunk 内的样本来自同一个数据集，减少 LMDB 切换
+    """
+    
+    def __init__(self, concat_dataset: ConcatDataset, chunk_size: int = 256, shuffle: bool = True):
+        """
+        Args:
+            concat_dataset: ConcatDataset 对象
+            chunk_size: 每个块的大小，越大则数据集切换越少，但随机性越差
+            shuffle: 是否打乱
+        """
+        self.concat_dataset = concat_dataset
+        self.chunk_size = chunk_size
+        self.shuffle = shuffle
+        
+        # 获取每个子数据集的大小和起始索引
+        self.dataset_sizes = []
+        self.dataset_offsets = [0]
+        
+        cumulative_size = 0
+        for dataset in concat_dataset.datasets:
+            size = len(dataset)
+            self.dataset_sizes.append(size)
+            cumulative_size += size
+            self.dataset_offsets.append(cumulative_size)
+        
+        self.total_size = cumulative_size
+    
+    def __iter__(self):
+        # 为每个数据集创建 chunk
+        all_chunks = []
+        
+        for dataset_idx, (offset, size) in enumerate(zip(self.dataset_offsets[:-1], self.dataset_sizes)):
+            # 生成该数据集的所有索引
+            indices = list(range(offset, offset + size))
+            
+            if self.shuffle:
+                # 先打乱该数据集内部的索引
+                np.random.shuffle(indices)
+            
+            # 分成 chunks
+            for i in range(0, len(indices), self.chunk_size):
+                chunk = indices[i:i + self.chunk_size]
+                all_chunks.append(chunk)
+        
+        if self.shuffle:
+            # 打乱 chunks 的顺序（保持 chunk 内部顺序）
+            np.random.shuffle(all_chunks)
+        
+        # 展平所有 chunks
+        for chunk in all_chunks:
+            for idx in chunk:
+                yield idx
+    
+    def __len__(self):
+        return self.total_size
 
 def get_data_path(data_folder: str, f: str, time: int, data_type: str = "image"):
     data_ext = {

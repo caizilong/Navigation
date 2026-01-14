@@ -25,6 +25,7 @@ from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1
 
 
 from vint_train.data.vint_dataset import ViNT_Dataset
+from vint_train.data.data_utils import InterleavedSampler  # 交错采样器，优化多数据集训练性能
 from vint_train.training.train_eval_loop import (
     train_eval_loop_nomad,
     load_model,
@@ -124,14 +125,46 @@ def main(config):
     # combine all the datasets from different robots
     train_dataset = ConcatDataset(train_dataset)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config["batch_size"],
-        shuffle=True,
-        num_workers=config["num_workers"],
-        drop_last=False,
-        persistent_workers=True,
-    )
+    # 读取配置中的优化参数
+    pin_memory = config.get("pin_memory", True)
+    prefetch_factor = config.get("prefetch_factor", 2)
+    use_interleaved_sampler = config.get("use_interleaved_sampler", False)
+    sampler_chunk_size = config.get("sampler_chunk_size", config["batch_size"] * 4)
+    
+    # 多数据集时启用交错采样器（如果配置开启）
+    is_multi_dataset = len(config["datasets"]) > 1
+    
+    if use_interleaved_sampler and is_multi_dataset:
+        # 多数据集：使用交错采样器，减少 LMDB 缓存切换频率
+        sampler = InterleavedSampler(
+            train_dataset, 
+            chunk_size=sampler_chunk_size,
+            shuffle=True
+        )
+        print(f"Using InterleavedSampler for {len(config['datasets'])} datasets with chunk_size={sampler_chunk_size}")
+        
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config["batch_size"],
+            sampler=sampler,
+            num_workers=config["num_workers"],
+            drop_last=False,
+            persistent_workers=True,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+        )
+    else:
+        # 单数据集或禁用交错采样：使用标准随机采样
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config["batch_size"],
+            shuffle=True,
+            num_workers=config["num_workers"],
+            drop_last=False,
+            persistent_workers=True,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+        )
 
     if "eval_batch_size" not in config:
         config["eval_batch_size"] = config["batch_size"]

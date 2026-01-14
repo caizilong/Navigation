@@ -33,6 +33,7 @@ from vint_train.models.mamba.mamba_vint import MambaViNT
 
 
 from vint_train.data.vint_dataset import ViNT_Dataset
+from vint_train.data.data_utils import InterleavedSampler  # 交错采样器，优化多数据集训练性能
 from vint_train.training.train_eval_loop import (
     train_eval_loop,
     train_eval_loop_nomad,
@@ -69,7 +70,8 @@ def main(config):
 
     cudnn.benchmark = True  # good if input sizes don't vary
     transform = ([
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
+                             0.229, 0.224, 0.225]),
     ])
     transform = transforms.Compose(transform)
 
@@ -132,16 +134,48 @@ def main(config):
     # combine all the datasets from different robots
     train_dataset = ConcatDataset(train_dataset)
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config["batch_size"],
-        shuffle=True,
-        num_workers=config["num_workers"],
-        drop_last=False,
-        persistent_workers=True,
-        pin_memory=True,  # 加速 CPU->GPU 数据传输
-        prefetch_factor=2,  # 预取下一批数据，减少 GPU 等待时间
-    )
+    # 读取配置中的优化参数
+    pin_memory = config.get("pin_memory", True)
+    prefetch_factor = config.get("prefetch_factor", 2)
+    use_interleaved_sampler = config.get("use_interleaved_sampler", False)
+    sampler_chunk_size = config.get(
+        "sampler_chunk_size", config["batch_size"] * 4)
+
+    # 多数据集时启用交错采样器（如果配置开启）
+    is_multi_dataset = len(config["datasets"]) > 1
+
+    if use_interleaved_sampler and is_multi_dataset:
+        # 多数据集：使用交错采样器，减少 LMDB 缓存切换频率
+        sampler = InterleavedSampler(
+            train_dataset,
+            chunk_size=sampler_chunk_size,
+            shuffle=True
+        )
+        print(
+            f"Using InterleavedSampler for {len(config['datasets'])} datasets with chunk_size={sampler_chunk_size}")
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config["batch_size"],
+            sampler=sampler,
+            num_workers=config["num_workers"],
+            drop_last=False,
+            persistent_workers=True,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+        )
+    else:
+        # 单数据集或禁用交错采样：使用标准随机采样
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config["batch_size"],
+            shuffle=True,
+            num_workers=config["num_workers"],
+            drop_last=False,
+            persistent_workers=True,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+        )
 
     if "eval_batch_size" not in config:
         config["eval_batch_size"] = config["batch_size"]
@@ -239,7 +273,8 @@ def main(config):
             )
             vision_encoder = replace_bn_with_gn(vision_encoder)
         else:
-            raise ValueError(f"Vision encoder {config['vision_encoder']} not supported")
+            raise ValueError(
+                f"Vision encoder {config['vision_encoder']} not supported")
 
         noise_pred_net = ConditionalUnet1D(
             input_dim=2,
@@ -415,9 +450,11 @@ def main(config):
 
     if "load_run" in config:  # load optimizer and scheduler after data parallel
         if "optimizer" in latest_checkpoint:
-            optimizer.load_state_dict(latest_checkpoint["optimizer"].state_dict())
+            optimizer.load_state_dict(
+                latest_checkpoint["optimizer"].state_dict())
         if scheduler is not None and "scheduler" in latest_checkpoint:
-            scheduler.load_state_dict(latest_checkpoint["scheduler"].state_dict())
+            scheduler.load_state_dict(
+                latest_checkpoint["scheduler"].state_dict())
 
     if config["model_type"] == "vint" or config["model_type"] == "gnm" or config["model_type"] == "mamba_vint":
         # 仅对Mamba模型启用梯度裁剪，避免cumsum导致的梯度爆炸
@@ -477,7 +514,8 @@ def main(config):
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method("spawn")
 
-    parser = argparse.ArgumentParser(description="Visual Navigation Transformer")
+    parser = argparse.ArgumentParser(
+        description="Visual Navigation Transformer")
 
     # project setup
     parser.add_argument(
@@ -517,7 +555,8 @@ if __name__ == "__main__":
             entity="coisinic243-beijing-university-of-technology",  # 使用你的wandb账户
         )
         wandb.save(args.config, policy="now")  # save the config file
-        wandb.run.name = config.get("run_name", f"{config['project_name']}_{int(time.time())}")
+        wandb.run.name = config.get(
+            "run_name", f"{config['project_name']}_{int(time.time())}")
         # update the wandb args with the training configurations
         if wandb.run:
             wandb.config.update(config)

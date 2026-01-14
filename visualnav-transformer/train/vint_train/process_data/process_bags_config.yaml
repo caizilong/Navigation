@@ -27,3 +27,10 @@ sacson:
   odom_process_func: "nav_to_xy_yaw"
 
 # add your own datasets below:
+
+huron:
+  odomtopics: "/odometry"
+  imtopics: "/fisheye_image/compressed"
+  ang_offset: 0.0
+  img_process_func: "process_sacson_img"
+  odom_process_func: "nav_to_xy_yaw"

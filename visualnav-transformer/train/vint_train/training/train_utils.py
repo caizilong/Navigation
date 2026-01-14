@@ -29,11 +29,23 @@ import matplotlib.pyplot as plt
 def get_ema_model(ema_model: EMAModel, model: nn.Module) -> nn.Module:
     """
     Get a model with EMA weights applied.
-    Compatible with new diffusers API where EMAModel doesn't have averaged_model attribute.
+    Compatible with diffusers 0.11.1 API where EMAModel has averaged_model attribute.
     """
-    ema_model_copy = copy.deepcopy(model)
-    ema_model.copy_to(ema_model_copy.parameters())
-    return ema_model_copy
+    # diffusers 0.11.1 版本直接返回 averaged_model
+    if hasattr(ema_model, 'averaged_model'):
+        return ema_model.averaged_model
+
+    # 兼容可能的其他版本（如果有 copy_to 方法）
+    if hasattr(ema_model, 'copy_to'):
+        ema_model_copy = copy.deepcopy(model)
+        ema_model.copy_to(ema_model_copy.parameters())
+        return ema_model_copy
+
+    # 如果都没有，抛出错误
+    raise AttributeError(
+        f"EMAModel object has neither 'averaged_model' attribute nor 'copy_to' method. "
+        f"Available attributes: {dir(ema_model)}"
+    )
 
 
 # LOAD DATA CONFIG
@@ -770,7 +782,7 @@ def train_nomad(
 
             if image_log_freq != 0 and i % image_log_freq == 0:
                 visualize_diffusion_action_distribution(
-                    get_ema_model(ema_model, model),
+                    model,
                     noise_scheduler,
                     batch_obs_images,
                     batch_goal_images,
@@ -966,7 +978,7 @@ def evaluate_nomad(
 
             if i % print_log_freq == 0 and print_log_freq != 0:
                 losses = _compute_losses_nomad(
-                    ema_eval_model,
+                    model,
                     noise_scheduler,
                     batch_obs_images,
                     batch_goal_images,

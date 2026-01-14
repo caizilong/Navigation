@@ -28,12 +28,24 @@ import matplotlib.pyplot as plt
 
 def get_ema_model(ema_model: EMAModel, model: nn.Module) -> nn.Module:
     """
-    获取应用了 EMA 权重的模型副本
-    兼容新版 diffusers 库的 EMAModel API
+    Get a model with EMA weights applied.
+    Compatible with diffusers 0.11.1 API where EMAModel has averaged_model attribute.
     """
-    ema_model_copy = copy.deepcopy(model)
-    ema_model.copy_to(ema_model_copy.parameters())
-    return ema_model_copy
+    # diffusers 0.11.1 版本直接返回 averaged_model
+    if hasattr(ema_model, 'averaged_model'):
+        return ema_model.averaged_model
+
+    # 兼容可能的其他版本（如果有 copy_to 方法）
+    if hasattr(ema_model, 'copy_to'):
+        ema_model_copy = copy.deepcopy(model)
+        ema_model.copy_to(ema_model_copy.parameters())
+        return ema_model_copy
+
+    # 如果都没有，抛出错误
+    raise AttributeError(
+        f"EMAModel object has neither 'averaged_model' attribute nor 'copy_to' method. "
+        f"Available attributes: {dir(ema_model)}"
+    )
 
 
 # LOAD DATA CONFIG

@@ -161,6 +161,7 @@ class ViNT_Dataset(Dataset):
     def _build_caches(self, use_tqdm: bool = True):
         """
         Build a cache of images for faster loading using LMDB
+        优化了多进程并发读取配置，解决多数据集联合训练时的锁竞争问题
         """
         cache_filename = os.path.join(
             self.data_split_folder,
@@ -184,12 +185,24 @@ class ViNT_Dataset(Dataset):
             with lmdb.open(cache_filename, map_size=2**40) as image_cache:
                 with image_cache.begin(write=True) as txn:
                     for traj_name, time in tqdm_iterator:
-                        image_path = get_data_path(self.data_folder, traj_name, time)
+                        image_path = get_data_path(
+                            self.data_folder, traj_name, time)
                         with open(image_path, "rb") as f:
                             txn.put(image_path.encode(), f.read())
 
-        # Reopen the cache file in read-only mode
-        self._image_cache: lmdb.Environment = lmdb.open(cache_filename, readonly=True)
+        # Reopen the cache file in read-only mode with optimized settings for multi-process access
+        # 优化多进程并发读取：
+        # - max_readers: 增加最大读取者数量，默认 126 太小
+        # - readahead: 关闭预读，因为随机访问模式下预读会浪费 I/O
+        # - lock: 关闭锁以避免多进程锁竞争（readonly 模式下安全）
+        self._image_cache: lmdb.Environment = lmdb.open(
+            cache_filename,
+            readonly=True,
+            max_readers=256,  # 增加最大读取者数量，支持更多 worker
+            readahead=False,  # 关闭预读，随机访问模式下更高效
+            lock=False,  # 只读模式下关闭锁，避免多进程锁竞争
+            meminit=False,  # 不初始化内存，加快打开速度
+        )
 
     def _build_index(self, use_tqdm: bool = False):
         """
@@ -206,9 +219,11 @@ class ViNT_Dataset(Dataset):
                 goals_index.append((traj_name, goal_time))
 
             begin_time = self.context_size * self.waypoint_spacing
-            end_time = traj_len - self.end_slack - self.len_traj_pred * self.waypoint_spacing
+            end_time = traj_len - self.end_slack - \
+                self.len_traj_pred * self.waypoint_spacing
             for curr_time in range(begin_time, end_time):
-                max_goal_distance = min(self.max_dist_cat * self.waypoint_spacing, traj_len - curr_time - 1)
+                max_goal_distance = min(
+                    self.max_dist_cat * self.waypoint_spacing, traj_len - curr_time - 1)
                 samples_index.append((traj_name, curr_time, max_goal_distance))
 
         return samples_index, goals_index
@@ -280,7 +295,8 @@ class ViNT_Dataset(Dataset):
         end_index = curr_time + self.len_traj_pred * self.waypoint_spacing + 1
         yaw = traj_data["yaw"][start_index:end_index:self.waypoint_spacing]
         positions = traj_data["position"][start_index:end_index:self.waypoint_spacing]
-        goal_pos = traj_data["position"][min(goal_time, len(traj_data["position"]) - 1)]
+        goal_pos = traj_data["position"][min(
+            goal_time, len(traj_data["position"]) - 1)]
 
         if len(yaw.shape) == 2:
             yaw = yaw.squeeze(1)
@@ -288,15 +304,19 @@ class ViNT_Dataset(Dataset):
         if yaw.shape != (self.len_traj_pred + 1,):
             const_len = self.len_traj_pred + 1 - yaw.shape[0]
             yaw = np.concatenate([yaw, np.repeat(yaw[-1], const_len)])
-            positions = np.concatenate([positions, np.repeat(positions[-1][None], const_len, axis=0)], axis=0)
+            positions = np.concatenate([positions, np.repeat(
+                positions[-1][None], const_len, axis=0)], axis=0)
 
-        assert yaw.shape == (self.len_traj_pred + 1,), f"{yaw.shape} and {(self.len_traj_pred + 1,)} should be equal"
-        assert positions.shape == (self.len_traj_pred + 1, 2), f"{positions.shape} and {(self.len_traj_pred + 1, 2)} should be equal"
+        assert yaw.shape == (
+            self.len_traj_pred + 1,), f"{yaw.shape} and {(self.len_traj_pred + 1,)} should be equal"
+        assert positions.shape == (
+            self.len_traj_pred + 1, 2), f"{positions.shape} and {(self.len_traj_pred + 1, 2)} should be equal"
 
         waypoints = to_local_coords(positions, positions[0], yaw[0])
         goal_pos = to_local_coords(goal_pos, positions[0], yaw[0])
 
-        assert waypoints.shape == (self.len_traj_pred + 1, 2), f"{waypoints.shape} and {(self.len_traj_pred + 1, 2)} should be equal"
+        assert waypoints.shape == (
+            self.len_traj_pred + 1, 2), f"{waypoints.shape} and {(self.len_traj_pred + 1, 2)} should be equal"
 
         if self.learn_angle:
             yaw = yaw[1:] - yaw[0]
@@ -305,13 +325,16 @@ class ViNT_Dataset(Dataset):
             actions = waypoints[1:]
 
         if self.normalize:
-            actions[:, :2] /= self.data_config["metric_waypoint_spacing"] * self.waypoint_spacing
-            goal_pos /= self.data_config["metric_waypoint_spacing"] * self.waypoint_spacing
+            actions[:, :2] /= self.data_config["metric_waypoint_spacing"] * \
+                self.waypoint_spacing
+            goal_pos /= self.data_config["metric_waypoint_spacing"] * \
+                self.waypoint_spacing
 
-        assert actions.shape == (self.len_traj_pred, self.num_action_params), f"{actions.shape} and {(self.len_traj_pred, self.num_action_params)} should be equal"
+        assert actions.shape == (
+            self.len_traj_pred, self.num_action_params), f"{actions.shape} and {(self.len_traj_pred, self.num_action_params)} should be equal"
 
         return actions, goal_pos
-    
+
     def _get_trajectory(self, trajectory_name):
         if trajectory_name in self.trajectory_cache:
             return self.trajectory_cache[trajectory_name]
@@ -320,9 +343,11 @@ class ViNT_Dataset(Dataset):
                 traj_data = pickle.load(f)
             # 修复嵌套数组问题: 将object类型数组转为float数组
             if traj_data["position"].dtype == object:
-                traj_data["position"] = np.array([np.array(p).flatten() for p in traj_data["position"]], dtype=np.float32)
+                traj_data["position"] = np.array(
+                    [np.array(p).flatten() for p in traj_data["position"]], dtype=np.float32)
             if traj_data["yaw"].dtype == object:
-                traj_data["yaw"] = np.array([float(y.item() if hasattr(y, 'item') else y[0] if isinstance(y, np.ndarray) else y) for y in traj_data["yaw"]], dtype=np.float32)
+                traj_data["yaw"] = np.array([float(y.item() if hasattr(y, 'item') else y[0] if isinstance(
+                    y, np.ndarray) else y) for y in traj_data["yaw"]], dtype=np.float32)
             self.trajectory_cache[trajectory_name] = traj_data
             return traj_data
 
@@ -342,7 +367,8 @@ class ViNT_Dataset(Dataset):
                 which_dataset (torch.Tensor): index of the datapoint in the dataset [for identifying the dataset for visualization when using multiple datasets]
         """
         f_curr, curr_time, max_goal_dist = self.index_to_data[i]
-        f_goal, goal_time, goal_is_negative = self._sample_goal(f_curr, curr_time, max_goal_dist)
+        f_goal, goal_time, goal_is_negative = self._sample_goal(
+            f_curr, curr_time, max_goal_dist)
 
         # Load images
         context = []
@@ -390,14 +416,16 @@ class ViNT_Dataset(Dataset):
         assert goal_time < goal_traj_len, f"{goal_time} an {goal_traj_len}"
 
         # Compute actions
-        actions, goal_pos = self._compute_actions(curr_traj_data, curr_time, goal_time)
-        
+        actions, goal_pos = self._compute_actions(
+            curr_traj_data, curr_time, goal_time)
+
         # Compute distances
         if goal_is_negative:
             distance = self.max_dist_cat
         else:
             distance = (goal_time - curr_time) // self.waypoint_spacing
-            assert (goal_time - curr_time) % self.waypoint_spacing == 0, f"{goal_time} and {curr_time} should be separated by an integer multiple of {self.waypoint_spacing}"
+            assert (
+                goal_time - curr_time) % self.waypoint_spacing == 0, f"{goal_time} and {curr_time} should be separated by an integer multiple of {self.waypoint_spacing}"
 
         actions_torch = torch.as_tensor(actions, dtype=torch.float32)
         if self.learn_angle:

@@ -4,11 +4,11 @@ run_name: nomad-mamba
 # training setup
 use_wandb: True
 train: True
-batch_size: 256
-eval_batch_size: 256
-epochs: 100
+batch_size: 128
+eval_batch_size: 64
+epochs: 150
 gpu_ids: [0]
-num_workers: 16
+num_workers: 24
 lr: 1e-4
 optimizer: adamw
 clipping: True
@@ -20,6 +20,14 @@ cyclic_period: 0
 plateau_patience: 0
 plateau_factor: 0.5
 seed: 0
+
+# DataLoader 优化参数
+pin_memory: True  # 加速 CPU->GPU 数据传输
+prefetch_factor: 4  # 预取批次数，减少 GPU 等待
+
+# 多数据集联合训练优化参数
+use_interleaved_sampler: True  # 是否使用交错采样器（多数据集时建议开启）
+sampler_chunk_size: 512  # 交错采样器的 chunk 大小，越大切换越少但随机性越差
 
 # 3. 增加权重衰减 (Weight Decay)
 weight_decay: 0.05  #  0.01 ~ 0.05
@@ -63,7 +71,7 @@ normalize: True
 
 # context
 context_type: temporal
-context_size: 0
+context_size: 2
 alpha: 1e-4
 
 # distance bounds for distance and action and distance predictions 

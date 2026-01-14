@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import tqdm
 import io
 import lmdb
+from PIL import Image  # 移到文件顶部以避免每次 _load_image 调用时重复导入
 
 import torch
 from torch.utils.data import Dataset
@@ -17,6 +18,7 @@ from vint_train.data.data_utils import (
     calculate_sin_cos,
     get_data_path,
     to_local_coords,
+    resize_and_aspect_crop,  # 移到文件顶部以避免每次 _load_image 调用时重复导入
 )
 
 
@@ -159,6 +161,7 @@ class ViNT_Dataset(Dataset):
     def _build_caches(self, use_tqdm: bool = True):
         """
         Build a cache of images for faster loading using LMDB
+        优化了多进程并发读取配置，解决多数据集联合训练时的锁竞争问题
         """
         cache_filename = os.path.join(
             self.data_split_folder,
@@ -186,9 +189,20 @@ class ViNT_Dataset(Dataset):
                         with open(image_path, "rb") as f:
                             txn.put(image_path.encode(), f.read())
 
-        # Reopen the cache file in read-only mode
-        self._image_cache: lmdb.Environment = lmdb.open(cache_filename, readonly=True)
-
+        # Reopen the cache file in read-only mode with optimized settings for multi-process access
+        # 优化多进程并发读取：
+        # - max_readers: 增加最大读取者数量，默认 126 太小
+        # - readahead: 关闭预读，因为随机访问模式下预读会浪费 I/O
+        # - lock: 关闭锁以避免多进程锁竞争（readonly 模式下安全）
+        self._image_cache: lmdb.Environment = lmdb.open(
+            cache_filename,
+            readonly=True,
+            max_readers=256,  # 增加最大读取者数量，支持更多 worker
+            readahead=False,  # 关闭预读，随机访问模式下更高效
+            lock=False,  # 只读模式下关闭锁，避免多进程锁竞争
+            meminit=False,  # 不初始化内存，加快打开速度
+        )
+        
     def _build_index(self, use_tqdm: bool = False):
         """
         Build an index consisting of tuples (trajectory name, time, max goal distance)
@@ -260,15 +274,13 @@ class ViNT_Dataset(Dataset):
             image_bytes = io.BytesIO(image_bytes)
 
             # [修改] 在 img_path_to_data 之前先加载为 PIL Image
-            from PIL import Image
             pil_image = Image.open(image_bytes)
 
             # [新增] 应用增强（仅在训练时）
             if self.augment_transform is not None and self.is_train:
                 pil_image = self.augment_transform(pil_image)
 
-            # 转换为 tensor
-            from vint_train.data.data_utils import resize_and_aspect_crop
+            # 转换为 tensor（resize_and_aspect_crop 已在文件顶部导入）
             return resize_and_aspect_crop(pil_image, self.image_size)
         except Exception as e:
             print(f"Failed to load image {image_path}: {str(e)}")
