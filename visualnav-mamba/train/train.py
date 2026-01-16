@@ -254,6 +254,60 @@ def main(config):
         dist_pred_net=dist_pred_network,
     )
 
+    # ========== 根据配置决定是否创建 EMA 模型 ==========
+    use_ema = config.get("use_ema", False)
+    ema_model = None
+
+    if use_ema:
+        # 由于 Mamba 模型包含无法 pickle 的 generator 对象，
+        # 我们需要创建一个完全独立的模型实例作为 EMA 模型
+        ema_vision_encoder = NoMaD_Mamba(
+            obs_encoding_size=config["encoding_size"],
+            context_size=config["context_size"],
+            obs_encoder=config.get("obs_encoder", "efficientnet_b0"),
+            goal_encoder=config.get("goal_encoder", None),
+            pretrained=config.get("pretrained", True),
+            mamba_d_state=config.get("mamba_d_state", 64),
+            mamba_d_conv=config.get("mamba_d_conv", 4),
+            mamba_expand=config.get("mamba_expand", 2),
+            mamba_headdim=config.get("mamba_headdim", 64),
+            mamba_num_blocks=config.get("mamba_num_blocks", 2),
+            mamba_chunk_size=config.get("mamba_chunk_size", 256),
+            mamba_use_mem_eff=config.get("mamba_use_mem_eff", True),
+            mamba_dropout=config.get("mamba_dropout", 0.0),
+            mamba_drop_path=config.get("mamba_drop_path", 0.0),
+        )
+
+        ema_noise_pred_net = ConditionalUnet1D(
+            input_dim=2,
+            global_cond_dim=config["encoding_size"],
+            down_dims=config["down_dims"],
+            cond_predict_scale=config["cond_predict_scale"],
+        )
+        ema_dist_pred_network = DenseNetwork(
+            embedding_dim=config["encoding_size"])
+
+        ema_model_instance = NoMaD(
+            vision_encoder=ema_vision_encoder,
+            noise_pred_net=ema_noise_pred_net,
+            dist_pred_net=ema_dist_pred_network,
+        )
+        # 加载主模型的初始权重到 EMA 模型
+        ema_model_instance.load_state_dict(model.state_dict())
+
+        # 创建 EMAModel 包装器，使用配置中的 ema_decay 参数
+        ema_decay = config.get("ema_decay", 0.9999)
+        ema_model = EMAModel(
+            model=ema_model_instance,
+            power=0.75,
+            update_after_step=0,
+            inv_gamma=1.0,
+            max_value=ema_decay,
+        )
+        print(f"Created independent EMA model instance with decay={ema_decay}")
+    else:
+        print("EMA model disabled (use_ema=False)")
+
     noise_scheduler = DDPMScheduler(
         num_train_timesteps=config["num_diffusion_iters"],
         beta_schedule='squaredcos_cap_v2',
@@ -413,6 +467,10 @@ def main(config):
         model = nn.DataParallel(model, device_ids=remapped_device_ids)
     model = model.to(device)
 
+    # EMA 模型也需要移到设备（如果启用）
+    if ema_model is not None:
+        ema_model.averaged_model = ema_model.averaged_model.to(device)
+
     if "load_run" in config:  # load optimizer and scheduler after data parallel
         if "optimizer" in latest_checkpoint:
             optimizer.load_state_dict(
@@ -425,6 +483,7 @@ def main(config):
     train_eval_loop_nomad(
         train_model=config["train"],
         model=model,
+        ema_model=ema_model,  # 传入预先创建的 EMA 模型
         optimizer=optimizer,
         lr_scheduler=scheduler,
         noise_scheduler=noise_scheduler,

@@ -14,7 +14,8 @@ from vint_train.visualizing.visualize_utils import to_numpy, from_numpy
 from vint_train.training.logger import Logger
 from vint_train.data.data_utils import VISUALIZATION_IMAGE_SIZE
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.training_utils import EMAModel
+# 使用项目自带的 EMAModel，避免 diffusers 版本的 deepcopy 导致 pickle generator 错误
+from diffusion_policy.model.diffusion.ema_model import EMAModel
 
 import torch
 import torch.nn as nn
@@ -26,20 +27,29 @@ import torchvision.transforms.functional as TF
 import matplotlib.pyplot as plt
 
 
-def get_ema_model(ema_model: EMAModel, model: nn.Module) -> nn.Module:
+def get_ema_model(ema_model, model: nn.Module) -> nn.Module:
     """
     Get a model with EMA weights applied.
+    If ema_model is None, returns the original model.
     Compatible with diffusers 0.11.1 API where EMAModel has averaged_model attribute.
     """
+    # 如果没有启用 EMA，直接返回原模型
+    if ema_model is None:
+        return model
+
     # diffusers 0.11.1 版本直接返回 averaged_model
     if hasattr(ema_model, 'averaged_model'):
         return ema_model.averaged_model
 
     # 兼容可能的其他版本（如果有 copy_to 方法）
     if hasattr(ema_model, 'copy_to'):
-        ema_model_copy = copy.deepcopy(model)
-        ema_model.copy_to(ema_model_copy.parameters())
-        return ema_model_copy
+        # 创建模型副本以避免直接修改原模型
+        import copy
+        model_state = copy.deepcopy(model.state_dict())
+        model_copy = copy.deepcopy(model)
+        model_copy.load_state_dict(model_state)
+        ema_model.copy_to(model_copy.parameters())
+        return model_copy
 
     # 如果都没有，抛出错误
     raise AttributeError(
@@ -291,8 +301,9 @@ def train_nomad(
             loss.backward()
             optimizer.step()
 
-            # Update Exponential Moving Average of the model weights
-            ema_model.step(model)
+            # Update Exponential Moving Average of the model weights (if enabled)
+            if ema_model is not None:
+                ema_model.step(model)
 
             # Logging
             loss_cpu = loss.item()
@@ -307,8 +318,10 @@ def train_nomad(
                 }, commit=False)
 
             if i % print_log_freq == 0:
+                # 使用 EMA 模型或原模型计算损失
+                eval_model = get_ema_model(ema_model, model)
                 losses = _compute_losses_nomad(
-                    get_ema_model(ema_model, model),
+                    eval_model,
                     noise_scheduler,
                     batch_obs_images,
                     batch_goal_images,
@@ -335,8 +348,10 @@ def train_nomad(
                     wandb.log(data_log, commit=True)
 
             if image_log_freq != 0 and i % image_log_freq == 0:
+                # 使用 EMA 模型或原模型进行可视化
+                vis_model = get_ema_model(ema_model, model)
                 visualize_diffusion_action_distribution(
-                    get_ema_model(ema_model, model),
+                    vis_model,
                     noise_scheduler,
                     batch_obs_images,
                     batch_goal_images,
@@ -358,7 +373,7 @@ def train_nomad(
 def evaluate_nomad(
     eval_type: str,
     model: nn.Module,
-    ema_model: EMAModel,
+    ema_model,  # 可能为 None
     dataloader: DataLoader,
     transform: transforms,
     device: torch.device,
@@ -379,7 +394,7 @@ def evaluate_nomad(
     Args:
         eval_type (string): f"{data_type}_{eval_type}" (e.g. "recon_train", "gs_test", etc.)
         model (nn.Module): original model for creating EMA copy
-        ema_model (nn.Module): exponential moving average version of model to evaluate
+        ema_model: exponential moving average version of model to evaluate (can be None)
         dataloader (DataLoader): dataloader for eval
         transform (transforms): transform to apply to images
         device (torch.device): device to use for evaluation
@@ -395,7 +410,7 @@ def evaluate_nomad(
         use_wandb (bool): whether to use wandb for logging
     """
     goal_mask_prob = torch.clip(torch.tensor(goal_mask_prob), 0, 1)
-    # 使用辅助函数获取 EMA 模型副本（兼容新版 diffusers）
+    # 使用 EMA 模型或原模型进行评估
     ema_eval_model = get_ema_model(ema_model, model)
     ema_eval_model.eval()
 

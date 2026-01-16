@@ -37,9 +37,13 @@ def get_ema_model(ema_model: EMAModel, model: nn.Module) -> nn.Module:
 
     # 兼容可能的其他版本（如果有 copy_to 方法）
     if hasattr(ema_model, 'copy_to'):
-        ema_model_copy = copy.deepcopy(model)
-        ema_model.copy_to(ema_model_copy.parameters())
-        return ema_model_copy
+        # 创建模型副本以避免直接修改原模型
+        import copy
+        model_state = copy.deepcopy(model.state_dict())
+        model_copy = copy.deepcopy(model)
+        model_copy.load_state_dict(model_state)
+        ema_model.copy_to(model_copy.parameters())
+        return model_copy
 
     # 如果都没有，抛出错误
     raise AttributeError(

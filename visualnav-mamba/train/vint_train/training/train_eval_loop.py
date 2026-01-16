@@ -14,12 +14,14 @@ from torch.optim import Adam
 from torchvision import transforms
 
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.training_utils import EMAModel
+# 使用项目自带的 EMAModel，避免 diffusers 版本的 deepcopy 导致 pickle generator 错误
+from diffusion_policy.model.diffusion.ema_model import EMAModel
 
 
 def train_eval_loop_nomad(
     train_model: bool,
     model: nn.Module,
+    ema_model,  # 预先创建的 EMAModel 实例
     optimizer: Adam,
     lr_scheduler: torch.optim.lr_scheduler._LRScheduler,
     noise_scheduler: DDPMScheduler,
@@ -80,7 +82,8 @@ def train_eval_loop_nomad(
         eval_image_log_freq = image_log_freq
 
     latest_path = os.path.join(project_folder, f"latest.pth")
-    ema_model = EMAModel(parameters=model.parameters(), power=0.75)
+    # ema_model 可能为 None（当 use_ema=False 时）
+    use_ema = ema_model is not None
 
     for epoch in range(current_epoch, current_epoch + epochs):
         if train_model:
@@ -106,11 +109,13 @@ def train_eval_loop_nomad(
             )
 
         numbered_path = os.path.join(project_folder, f"ema_{epoch}.pth")
-        ema_model_copy = get_ema_model(ema_model, model)
-        torch.save(ema_model_copy.state_dict(), numbered_path)
-        numbered_path = os.path.join(project_folder, f"ema_latest.pth")
-        torch.save(ema_model_copy.state_dict(), numbered_path)
-        print(f"Saved EMA model to {numbered_path}")
+        # 只有启用 EMA 时才保存 EMA 模型
+        if use_ema:
+            ema_model_copy = get_ema_model(ema_model, model)
+            torch.save(ema_model_copy.state_dict(), numbered_path)
+            numbered_path = os.path.join(project_folder, f"ema_latest.pth")
+            torch.save(ema_model_copy.state_dict(), numbered_path)
+            print(f"Saved EMA model to {numbered_path}")
 
         numbered_path = os.path.join(project_folder, f"{epoch}.pth")
         torch.save(model.state_dict(), numbered_path)
