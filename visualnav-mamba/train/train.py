@@ -1,57 +1,90 @@
+# ============================================================
+# 必须在 import torch 之前设置 CUDA_VISIBLE_DEVICES
+# 这三个模块不依赖 CUDA，可以安全导入
+# ============================================================
+
 import os
-import wandb
 import argparse
-import numpy as np
 import yaml
-import time
-import pdb
-import copy
-
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, ConcatDataset
-from torch.optim import Adam, AdamW
-from torchvision import transforms
-import torch.backends.cudnn as cudnn
-from warmup_scheduler import GradualWarmupScheduler
-
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.optimization import get_scheduler
-
-# IMPORT YOUR MODEL HERE
-from vint_train.models.nomad.nomad import NoMaD, DenseNetwork
-from vint_train.models.nomad.nomad_mamba import NoMaD_Mamba, replace_bn_with_gn
-from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 
 
-from vint_train.data.vint_dataset import ViNT_Dataset
-from vint_train.data.data_utils import InterleavedSampler  # 交错采样器，优化多数据集训练性能
+def _early_set_gpu():
+    """在 torch 初始化前设置 GPU"""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--config", "-c", default="config/defaults.yaml", type=str)
+    args, _ = parser.parse_known_args()
+
+    with open("config/defaults.yaml", "r") as f:
+        config = yaml.safe_load(f)
+    if os.path.exists(args.config):
+        with open(args.config, "r") as f:
+            config.update(yaml.safe_load(f))
+
+    if "gpu_ids" in config:
+        gpu_ids = config["gpu_ids"]
+        if isinstance(gpu_ids, int):
+            gpu_ids = [gpu_ids]
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(x) for x in gpu_ids)
+        print(
+            f"[Early Init] Setting CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
+
+
+# 立即调用，确保在 import torch 之前执行
+_early_set_gpu()
+
+# ============================================================
+# 现在可以安全地导入 torch 和其他依赖 CUDA 的模块
+# ============================================================
 from vint_train.training.train_eval_loop import (
     train_eval_loop_nomad,
     load_model,
 )
+from vint_train.data.data_utils import InterleavedSampler
+from vint_train.data.vint_dataset import ViNT_Dataset
+from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
+from vint_train.models.nomad.nomad_mamba import NoMaD_Mamba, replace_bn_with_gn
+from vint_train.models.nomad.nomad import NoMaD, DenseNetwork
+from diffusers.optimization import get_scheduler
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from warmup_scheduler import GradualWarmupScheduler
+import copy
+import pdb
+import time
+import numpy as np
+import wandb
+from torchvision import transforms
+from torch.optim import Adam, AdamW
+from torch.utils.data import DataLoader, ConcatDataset
+import torch.backends.cudnn as cudnn
+import torch.nn as nn
+import torch
+
+# IMPORT YOUR MODEL HERE - 这些导入会触发 mamba_ssm 的导入
 
 
 def main(config):
     assert config["distance"]["min_dist_cat"] < config["distance"]["max_dist_cat"]
     assert config["action"]["min_dist_cat"] < config["action"]["max_dist_cat"]
 
+    # 确保 gpu_ids 格式正确
+    if "gpu_ids" not in config:
+        config["gpu_ids"] = [0]
+    elif isinstance(config["gpu_ids"], int):
+        config["gpu_ids"] = [config["gpu_ids"]]
+
+    # GPU 已在文件开头通过 _early_set_gpu() 设置
     if torch.cuda.is_available():
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        if "gpu_ids" not in config:
-            config["gpu_ids"] = [0]
-        elif type(config["gpu_ids"]) == int:
-            config["gpu_ids"] = [config["gpu_ids"]]
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
-            [str(x) for x in config["gpu_ids"]]
-        )
-        print("Using cuda devices:", os.environ["CUDA_VISIBLE_DEVICES"])
+        print("Using cuda devices:", os.environ.get(
+            "CUDA_VISIBLE_DEVICES", "all"))
     else:
         print("Using cpu")
 
-    first_gpu_id = config["gpu_ids"][0]
+    # 注意：设置 CUDA_VISIBLE_DEVICES 后，GPU 索引会重新映射
+    # 例如：gpu_ids=[1] 设置 CUDA_VISIBLE_DEVICES=1 后，该 GPU 变成 cuda:0
     device = torch.device(
-        f"cuda:{first_gpu_id}" if torch.cuda.is_available() else "cpu"
+        "cuda:0" if torch.cuda.is_available() else "cpu"
     )
 
     if "seed" in config:
@@ -129,20 +162,22 @@ def main(config):
     pin_memory = config.get("pin_memory", True)
     prefetch_factor = config.get("prefetch_factor", 2)
     use_interleaved_sampler = config.get("use_interleaved_sampler", False)
-    sampler_chunk_size = config.get("sampler_chunk_size", config["batch_size"] * 4)
-    
+    sampler_chunk_size = config.get(
+        "sampler_chunk_size", config["batch_size"] * 4)
+
     # 多数据集时启用交错采样器（如果配置开启）
     is_multi_dataset = len(config["datasets"]) > 1
-    
+
     if use_interleaved_sampler and is_multi_dataset:
         # 多数据集：使用交错采样器，减少 LMDB 缓存切换频率
         sampler = InterleavedSampler(
-            train_dataset, 
+            train_dataset,
             chunk_size=sampler_chunk_size,
             shuffle=True
         )
-        print(f"Using InterleavedSampler for {len(config['datasets'])} datasets with chunk_size={sampler_chunk_size}")
-        
+        print(
+            f"Using InterleavedSampler for {len(config['datasets'])} datasets with chunk_size={sampler_chunk_size}")
+
         train_loader = DataLoader(
             train_dataset,
             batch_size=config["batch_size"],
@@ -371,8 +406,11 @@ def main(config):
             current_epoch = latest_checkpoint["epoch"] + 1
 
     # Multi-GPU
+    # 注意：设置 CUDA_VISIBLE_DEVICES 后，设备 ID 会重新映射为 0, 1, 2...
     if len(config["gpu_ids"]) > 1:
-        model = nn.DataParallel(model, device_ids=config["gpu_ids"])
+        # 重新映射的设备 ID 列表
+        remapped_device_ids = list(range(len(config["gpu_ids"])))
+        model = nn.DataParallel(model, device_ids=remapped_device_ids)
     model = model.to(device)
 
     if "load_run" in config:  # load optimizer and scheduler after data parallel
@@ -406,6 +444,12 @@ def main(config):
         use_wandb=config["use_wandb"],
         eval_fraction=config["eval_fraction"],
         eval_freq=config["eval_freq"],
+        eval_print_log_freq=config.get(
+            "eval_print_log_freq", config["print_log_freq"]),
+        eval_wandb_log_freq=config.get(
+            "eval_wandb_log_freq", config["wandb_log_freq"]),
+        eval_image_log_freq=config.get(
+            "eval_image_log_freq", config["image_log_freq"]),
     )
 
     print("FINISHED TRAINING")

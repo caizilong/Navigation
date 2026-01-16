@@ -73,70 +73,73 @@ def _compute_losses_nomad(
 ):
     """
     Compute losses for distance and action prediction.
+    注意：这个函数仅用于日志记录，不参与梯度更新，必须使用 torch.no_grad()
     """
 
     pred_horizon = batch_action_label.shape[1]
     action_dim = batch_action_label.shape[2]
 
-    model_output_dict = model_output(
-        ema_model,
-        noise_scheduler,
-        batch_obs_images,
-        batch_goal_images,
-        pred_horizon,
-        action_dim,
-        num_samples=1,
-        device=device,
-    )
-    uc_actions = model_output_dict['uc_actions']
-    gc_actions = model_output_dict['gc_actions']
-    gc_distance = model_output_dict['gc_distance']
+    # 使用 torch.no_grad() 避免计算图累积导致显存泄漏
+    with torch.no_grad():
+        model_output_dict = model_output(
+            ema_model,
+            noise_scheduler,
+            batch_obs_images,
+            batch_goal_images,
+            pred_horizon,
+            action_dim,
+            num_samples=1,
+            device=device,
+        )
+        uc_actions = model_output_dict['uc_actions']
+        gc_actions = model_output_dict['gc_actions']
+        gc_distance = model_output_dict['gc_distance']
 
-    gc_dist_loss = F.mse_loss(gc_distance, batch_dist_label.unsqueeze(-1))
+        gc_dist_loss = F.mse_loss(gc_distance, batch_dist_label.unsqueeze(-1))
 
-    def action_reduce(unreduced_loss: torch.Tensor):
-        # Reduce over non-batch dimensions to get loss per batch element
-        while unreduced_loss.dim() > 1:
-            unreduced_loss = unreduced_loss.mean(dim=-1)
-        assert unreduced_loss.shape == action_mask.shape, f"{unreduced_loss.shape} != {action_mask.shape}"
-        return (unreduced_loss * action_mask).mean() / (action_mask.mean() + 1e-2)
+        def action_reduce(unreduced_loss: torch.Tensor):
+            # Reduce over non-batch dimensions to get loss per batch element
+            while unreduced_loss.dim() > 1:
+                unreduced_loss = unreduced_loss.mean(dim=-1)
+            assert unreduced_loss.shape == action_mask.shape, f"{unreduced_loss.shape} != {action_mask.shape}"
+            return (unreduced_loss * action_mask).mean() / (action_mask.mean() + 1e-2)
 
-    # Mask out invalid inputs (for negatives, or when the distance between obs and goal is large)
-    assert uc_actions.shape == batch_action_label.shape, f"{uc_actions.shape} != {batch_action_label.shape}"
-    assert gc_actions.shape == batch_action_label.shape, f"{gc_actions.shape} != {batch_action_label.shape}"
+        # Mask out invalid inputs (for negatives, or when the distance between obs and goal is large)
+        assert uc_actions.shape == batch_action_label.shape, f"{uc_actions.shape} != {batch_action_label.shape}"
+        assert gc_actions.shape == batch_action_label.shape, f"{gc_actions.shape} != {batch_action_label.shape}"
 
-    uc_action_loss = action_reduce(F.mse_loss(
-        uc_actions, batch_action_label, reduction="none"))
-    gc_action_loss = action_reduce(F.mse_loss(
-        gc_actions, batch_action_label, reduction="none"))
+        uc_action_loss = action_reduce(F.mse_loss(
+            uc_actions, batch_action_label, reduction="none"))
+        gc_action_loss = action_reduce(F.mse_loss(
+            gc_actions, batch_action_label, reduction="none"))
 
-    uc_action_waypts_cos_similairity = action_reduce(F.cosine_similarity(
-        uc_actions[:, :, :2], batch_action_label[:, :, :2], dim=-1
-    ))
-    uc_multi_action_waypts_cos_sim = action_reduce(F.cosine_similarity(
-        torch.flatten(uc_actions[:, :, :2], start_dim=1),
-        torch.flatten(batch_action_label[:, :, :2], start_dim=1),
-        dim=-1,
-    ))
+        uc_action_waypts_cos_similairity = action_reduce(F.cosine_similarity(
+            uc_actions[:, :, :2], batch_action_label[:, :, :2], dim=-1
+        ))
+        uc_multi_action_waypts_cos_sim = action_reduce(F.cosine_similarity(
+            torch.flatten(uc_actions[:, :, :2], start_dim=1),
+            torch.flatten(batch_action_label[:, :, :2], start_dim=1),
+            dim=-1,
+        ))
 
-    gc_action_waypts_cos_similairity = action_reduce(F.cosine_similarity(
-        gc_actions[:, :, :2], batch_action_label[:, :, :2], dim=-1
-    ))
-    gc_multi_action_waypts_cos_sim = action_reduce(F.cosine_similarity(
-        torch.flatten(gc_actions[:, :, :2], start_dim=1),
-        torch.flatten(batch_action_label[:, :, :2], start_dim=1),
-        dim=-1,
-    ))
+        gc_action_waypts_cos_similairity = action_reduce(F.cosine_similarity(
+            gc_actions[:, :, :2], batch_action_label[:, :, :2], dim=-1
+        ))
+        gc_multi_action_waypts_cos_sim = action_reduce(F.cosine_similarity(
+            torch.flatten(gc_actions[:, :, :2], start_dim=1),
+            torch.flatten(batch_action_label[:, :, :2], start_dim=1),
+            dim=-1,
+        ))
 
-    results = {
-        "uc_action_loss": uc_action_loss,
-        "uc_action_waypts_cos_sim": uc_action_waypts_cos_similairity,
-        "uc_multi_action_waypts_cos_sim": uc_multi_action_waypts_cos_sim,
-        "gc_dist_loss": gc_dist_loss,
-        "gc_action_loss": gc_action_loss,
-        "gc_action_waypts_cos_sim": gc_action_waypts_cos_similairity,
-        "gc_multi_action_waypts_cos_sim": gc_multi_action_waypts_cos_sim,
-    }
+        results = {
+            "uc_action_loss": uc_action_loss,
+            "uc_action_waypts_cos_sim": uc_action_waypts_cos_similairity,
+            "uc_multi_action_waypts_cos_sim": uc_multi_action_waypts_cos_sim,
+            "gc_dist_loss": gc_dist_loss,
+            "gc_action_loss": gc_action_loss,
+            "gc_action_waypts_cos_sim": gc_action_waypts_cos_similairity,
+            "gc_multi_action_waypts_cos_sim": gc_multi_action_waypts_cos_sim,
+        }
 
     return results
 
@@ -294,12 +297,14 @@ def train_nomad(
             # Logging
             loss_cpu = loss.item()
             tepoch.set_postfix(loss=loss_cpu)
-            # wandb.log({"total_loss": loss_cpu}, step=epoch)
-            # wandb.log({"dist_loss": dist_loss.item()}, step=epoch)
-            # wandb.log({"diffusion_loss": diffusion_loss.item()}, step=epoch)
-            wandb.log({"total_loss": loss_cpu})
-            wandb.log({"dist_loss": dist_loss.item()})
-            wandb.log({"diffusion_loss": diffusion_loss.item()})
+
+            # 添加频率控制和 use_wandb 检查
+            if use_wandb and i % wandb_log_freq == 0 and wandb_log_freq != 0:
+                wandb.log({
+                    "train/total_loss": loss_cpu,
+                    "train/dist_loss": dist_loss.item(),
+                    "train/diffusion_loss": diffusion_loss.item(),
+                }, commit=False)
 
             if i % print_log_freq == 0:
                 losses = _compute_losses_nomad(
@@ -425,22 +430,24 @@ def evaluate_nomad(
     }
     num_batches = max(int(num_batches * eval_fraction), 1)
 
-    with tqdm.tqdm(
-            itertools.islice(dataloader, num_batches),
-            total=num_batches,
-            dynamic_ncols=True,
-            desc=f"Evaluating {eval_type} for epoch {epoch}",
-            leave=False) as tepoch:
-        for i, data in enumerate(tepoch):
-            (
-                obs_image,
-                goal_image,
-                actions,
-                distance,
-                goal_pos,
-                dataset_idx,
-                action_mask,
-            ) = data
+    # 评估阶段不需要梯度，使用 torch.no_grad() 避免显存泄漏
+    with torch.no_grad():
+        with tqdm.tqdm(
+                itertools.islice(dataloader, num_batches),
+                total=num_batches,
+                dynamic_ncols=True,
+                desc=f"Evaluating {eval_type} for epoch {epoch}",
+                leave=False) as tepoch:
+            for i, data in enumerate(tepoch):
+                (
+                    obs_image,
+                    goal_image,
+                    actions,
+                    distance,
+                    goal_pos,
+                    dataset_idx,
+                    action_mask,
+                ) = data
 
             obs_images = torch.split(obs_image, 3, dim=1)
             batch_viz_obs_images = TF.resize(
@@ -519,12 +526,13 @@ def evaluate_nomad(
             loss_cpu = rand_mask_loss.item()
             tepoch.set_postfix(loss=loss_cpu)
 
-            # wandb.log({"diffusion_eval_loss (random masking)": rand_mask_loss}, step=epoch)
-            # wandb.log({"diffusion_eval_loss (no masking)": no_mask_loss}, step=epoch)
-            # wandb.log({"diffusion_eval_loss (goal masking)": goal_mask_loss}, step=epoch)
-            wandb.log({"diffusion_eval_loss (random masking)": rand_mask_loss})
-            wandb.log({"diffusion_eval_loss (no masking)": no_mask_loss})
-            wandb.log({"diffusion_eval_loss (goal masking)": goal_mask_loss})
+            # 添加频率控制和 use_wandb 检查，避免每个 batch 都上传
+            if use_wandb and i % wandb_log_freq == 0 and wandb_log_freq != 0:
+                wandb.log({
+                    f"{eval_type}/diffusion_eval_loss_random_masking": rand_mask_loss.item(),
+                    f"{eval_type}/diffusion_eval_loss_no_masking": no_mask_loss.item(),
+                    f"{eval_type}/diffusion_eval_loss_goal_masking": goal_mask_loss.item(),
+                }, commit=False)
 
             if i % print_log_freq == 0 and print_log_freq != 0:
                 losses = _compute_losses_nomad(
@@ -715,7 +723,10 @@ def visualize_diffusion_action_distribution(
     num_samples: int = 30,
     use_wandb: bool = True,
 ):
-    """Plot samples from the exploration model."""
+    """
+    Plot samples from the exploration model.
+    注意：这个函数仅用于可视化，不参与梯度更新，必须使用 torch.no_grad()
+    """
 
     visualize_path = os.path.join(
         project_folder,
@@ -751,20 +762,23 @@ def visualize_diffusion_action_distribution(
     gc_actions_list = []
     gc_distances_list = []
 
-    for obs, goal in zip(batch_obs_images_list, batch_goal_images_list):
-        model_output_dict = model_output(
-            ema_model,
-            noise_scheduler,
-            obs,
-            goal,
-            pred_horizon,
-            action_dim,
-            num_samples,
-            device,
-        )
-        uc_actions_list.append(to_numpy(model_output_dict['uc_actions']))
-        gc_actions_list.append(to_numpy(model_output_dict['gc_actions']))
-        gc_distances_list.append(to_numpy(model_output_dict['gc_distance']))
+    # 使用 torch.no_grad() 避免计算图累积导致显存泄漏
+    with torch.no_grad():
+        for obs, goal in zip(batch_obs_images_list, batch_goal_images_list):
+            model_output_dict = model_output(
+                ema_model,
+                noise_scheduler,
+                obs,
+                goal,
+                pred_horizon,
+                action_dim,
+                num_samples,
+                device,
+            )
+            uc_actions_list.append(to_numpy(model_output_dict['uc_actions']))
+            gc_actions_list.append(to_numpy(model_output_dict['gc_actions']))
+            gc_distances_list.append(
+                to_numpy(model_output_dict['gc_distance']))
 
     # concatenate
     uc_actions_list = np.concatenate(uc_actions_list, axis=0)

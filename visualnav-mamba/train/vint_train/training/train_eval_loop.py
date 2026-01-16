@@ -39,6 +39,9 @@ def train_eval_loop_nomad(
     use_wandb: bool = True,
     eval_fraction: float = 0.25,
     eval_freq: int = 1,
+    eval_print_log_freq: int = None,
+    eval_wandb_log_freq: int = None,
+    eval_image_log_freq: int = None,
 ):
     """
     Train and evaluate the model for several epochs (vint or gnm models)
@@ -64,7 +67,18 @@ def train_eval_loop_nomad(
         use_wandb: whether to log to wandb or not
         eval_fraction: fraction of training data to use for evaluation
         eval_freq: frequency of evaluation
+        eval_print_log_freq: frequency of printing to console during evaluation (if None, use print_log_freq)
+        eval_wandb_log_freq: frequency of logging to wandb during evaluation (if None, use wandb_log_freq)
+        eval_image_log_freq: frequency of logging images to wandb during evaluation (if None, use image_log_freq)
     """
+    # 如果未指定评估专用的日志频率，使用训练时的频率
+    if eval_print_log_freq is None:
+        eval_print_log_freq = print_log_freq
+    if eval_wandb_log_freq is None:
+        eval_wandb_log_freq = wandb_log_freq
+    if eval_image_log_freq is None:
+        eval_image_log_freq = image_log_freq
+
     latest_path = os.path.join(project_folder, f"latest.pth")
     ema_model = EMAModel(parameters=model.parameters(), power=0.75)
 
@@ -132,9 +146,10 @@ def train_eval_loop_nomad(
                     goal_mask_prob=goal_mask_prob,
                     project_folder=project_folder,
                     epoch=epoch,
-                    print_log_freq=print_log_freq,
+                    print_log_freq=eval_print_log_freq,
                     num_images_log=num_images_log,
-                    wandb_log_freq=wandb_log_freq,
+                    wandb_log_freq=eval_wandb_log_freq,
+                    image_log_freq=eval_image_log_freq,
                     use_wandb=use_wandb,
                     eval_fraction=eval_fraction,
                 )
@@ -143,12 +158,14 @@ def train_eval_loop_nomad(
             lr_scheduler.step()
 
         # Log learning rate
-        wandb.log({
-            "lr": optimizer.param_groups[0]["lr"],
-        }, commit=False)
+        if use_wandb:
+            wandb.log({
+                "lr": optimizer.param_groups[0]["lr"],
+            }, commit=False)
 
     # Flush the last set of eval logs
-    wandb.log({})
+    if use_wandb:
+        wandb.log({})
     print()
 
 
